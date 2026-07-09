@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/UnitConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "baneling"
+display_name = "爆裂虫"
+description = "酸爆攻坚单位；克制火焰炮塔和密集火力，推进强但损耗高。"
+larva_cost = 2
+pulp_cost = 34.0
+enzyme_cost = 8.0
+helix_cost = 0.0
+unlock_devour = 120.0
+hatch_seconds = 6.0
+power = 18.0
+toughness = 0.55
+damage_tag = "acid"
+deployment_batch = 1

@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="PluginConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/PluginConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "acid_carapace"
+display_name = "酸化甲壳"
+description = "装配到跳虫，提高保全率，适合撤离前保存兵力。"
+target_unit = "zergling"
+cost_helix = 2.0
+damage_bonus = 0.12
+survival_bonus = 0.025
+counter_tag = "physical"
+unlock_devour = 0.0

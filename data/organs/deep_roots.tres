@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="OrganConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/OrganConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "deep_roots"
+display_name = "深钻根须"
+description = "向地下钻探回收高密度生物质，提高原浆来源。"
+cost_resource = "pulp"
+base_cost = 52.0
+cost_growth = 1.15
+production_resource = "pulp"
+base_rate = 2.8
+rate_growth = 1.12

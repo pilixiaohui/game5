@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="OrganConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/OrganConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "mucus_fronds"
+display_name = "菌毯绒毛"
+description = "基础代谢器官，持续吸收环境有机物并生成原浆。"
+cost_resource = "pulp"
+base_cost = 18.0
+cost_growth = 1.12
+production_resource = "pulp"
+base_rate = 1.2
+rate_growth = 1.11

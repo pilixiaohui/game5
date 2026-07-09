@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="OrganConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/OrganConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "ferment_sac"
+display_name = "发酵囊"
+description = "稳定制造幼虫营养液，缩短储备成型时间。"
+cost_resource = "enzyme"
+base_cost = 18.0
+cost_growth = 1.15
+production_resource = "larva"
+base_rate = 0.08
+rate_growth = 1.10

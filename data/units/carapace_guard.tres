@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/UnitConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "carapace_guard"
+display_name = "甲壳卫士"
+description = "厚壳护卫单位；抗狙击和火力压制，推进慢但撤离/持续战更稳。"
+larva_cost = 2
+pulp_cost = 42.0
+enzyme_cost = 3.0
+helix_cost = 3.0
+unlock_devour = 150.0
+hatch_seconds = 7.0
+power = 9.0
+toughness = 2.2
+damage_tag = "shell"
+deployment_batch = 2

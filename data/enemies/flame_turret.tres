@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="EnemyConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/EnemyConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "flame_turret"
+display_name = "火焰炮塔"
+pressure = 24.0
+armor = 1.4
+weakness_tag = "acid"
+hint = "持续焚烧会放大虫群损耗，酸爆单位能快速拆毁。"

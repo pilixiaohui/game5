@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="PluginConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/PluginConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "piercing_spines"
+display_name = "穿刺脊突"
+description = "装配到刺蛇，显著克制盾卫，让第二片区域从停滞变为推进。"
+target_unit = "hydralisk"
+cost_helix = 5.0
+damage_bonus = 0.45
+survival_bonus = 0.006
+counter_tag = "pierce"
+unlock_devour = 0.0

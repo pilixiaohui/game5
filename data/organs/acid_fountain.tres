@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="OrganConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/OrganConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "acid_fountain"
+display_name = "酸蚀喷泉"
+description = "把过剩原浆裂解为活性酶，用于高级单位和构筑。"
+cost_resource = "pulp"
+base_cost = 95.0
+cost_growth = 1.17
+production_resource = "enzyme"
+base_rate = 0.34
+rate_growth = 1.14

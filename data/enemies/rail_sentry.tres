@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="EnemyConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/EnemyConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "rail_sentry"
+display_name = "轨道哨戒"
+pressure = 22.0
+armor = 1.8
+weakness_tag = "shell"
+hint = "高穿透狙击会点杀脆弱单位，甲壳卫士能承压换线。"

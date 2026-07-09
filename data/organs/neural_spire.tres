@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="OrganConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/OrganConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "neural_spire"
+display_name = "神经尖塔"
+description = "恢复蜂巢调度能力，提升幼虫供给并支撑高级投放。"
+cost_resource = "helix"
+base_cost = 12.0
+cost_growth = 1.25
+production_resource = "larva"
+base_rate = 0.13
+rate_growth = 1.13

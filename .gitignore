@@ -1,0 +1,9 @@
+.godot/
+*.tmp
+*.log
+user://
+.agent_context/
+.multica/
+AGENTS.md
+content_expansion_experience_probe.gd
+异种起源_无尽洪流_Godot版游戏设计白皮书.md

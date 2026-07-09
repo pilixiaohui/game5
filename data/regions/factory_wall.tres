@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="RegionConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/RegionConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "factory_wall"
+display_name = "废弃工厂防线"
+description = "盾卫与火力点组成停滞墙，需要刺蛇和穿刺脊突形成有效构筑。"
+length = 120.0
+enemy_ids = Array[String](["rifleman", "shield_guard"])
+enemy_pressure = 32.0
+reward_pulp_per_progress = 7.2
+reward_enzyme_per_progress = 0.9
+unlock_at_devour = 25.0
+next_region = "research_bastion"
