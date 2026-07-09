@@ -13,6 +13,7 @@ const FACTORY_ENTRY_REGION := "factory_wall"
 const FACTORY_ENTRY_UNIT := "hydralisk"
 const FACTORY_ENTRY_PLUGIN := "piercing_spines"
 const FACTORY_ENTRY_WAVE_MIN := 3
+const READABLE_REPORT_HOLD_SECONDS := 3.5
 
 var ConfigDB
 var GameState
@@ -118,7 +119,7 @@ func prepare_wave(unit_id: String = "zergling") -> bool:
 	GameState.deployment_intensity[unit_id] = 0
 	var prepared: int = int(GameState.reserves.get(unit_id, 0)) + field_count
 	var cause: String = "ready_wave" if prepared >= needed else "need_reserve"
-	var pressure: float = _effective_pressure(region)
+	var pressure: float = _effective_pressure(region, unit_id)
 	GameState.battle_report = _make_battle_report("preparing", region, 0.0, float(prepared) * unit.power * _battle_support_multiplier(unit_id), pressure, _field_total(), 0, 0, {
 		"prepared_reserve": prepared,
 		"needed_reserve": needed,
@@ -152,7 +153,7 @@ func assault_push(unit_id: String = "zergling") -> bool:
 		return false
 	_apply_factory_entry_staging(region.id, unit_id)
 	var needed: int = _needed_reserve_for_region(unit_id, region)
-	var pressure: float = _effective_pressure(region)
+	var pressure: float = _effective_pressure(region, unit_id)
 	var ready_count: int = int(GameState.reserves.get(unit_id, 0)) + int(GameState.field_units.get(unit_id, 0))
 	if ready_count < needed:
 		_hatch_toward_reserve(unit_id, maxi(0, needed - int(GameState.field_units.get(unit_id, 0))), PREPARE_MAX_BATCH)
@@ -225,9 +226,11 @@ func buy_or_equip_plugin(plugin_id: String) -> bool:
 			GameState.set_feedback("螺旋序列不足：装配%s需要 %.0f。" % [plugin.display_name, plugin.cost_helix])
 			return false
 		GameState.plugins_owned[plugin_id] = true
-	GameState.equipped_plugin = plugin_id
+	_equip_plugin_to_unit_build(plugin)
 	_refresh_battle_projection("plugin")
-	GameState.set_feedback("已装配构筑：%s。下一次战斗会改变伤害或保全结果。" % plugin.display_name)
+	var build_summary: Dictionary = build_summary_for_unit(plugin.target_unit)
+	var reaction_note: String = "；%s" % String(build_summary.get("reaction_text", "")) if String(build_summary.get("reaction_text", "")) != "" else ""
+	GameState.set_feedback("已装配构筑：%s -> %s槽。%s%s" % [plugin.display_name, _unit_name(plugin.target_unit), String(build_summary.get("status_text", "改变战斗结果")), reaction_note])
 	return true
 
 func retreat() -> void:
@@ -259,7 +262,7 @@ func battle_projection(unit_id: String = "zergling") -> Dictionary:
 		return {}
 	var unit = ConfigDB.get_unit(unit_id)
 	var unit_power: float = 0.0 if unit == null else unit.power * _battle_support_multiplier(unit_id)
-	var effective_pressure: float = _effective_pressure(region)
+	var effective_pressure: float = _effective_pressure(region, unit_id)
 	var needed: int = _needed_reserve_for_region(unit_id, region)
 	var baseline_pressure: float = _baseline_pressure(region)
 	var baseline_needed: int = _baseline_needed_reserve(unit_id, region)
@@ -296,6 +299,13 @@ func battle_projection(unit_id: String = "zergling") -> Dictionary:
 		"unit_power": unit_power,
 		"support_bonus": _battle_support_bonus(),
 		"plugin_bonus": _plugin_damage_bonus(unit_id),
+		"build_plugin_id": _equipped_plugin_id_for_unit(unit_id),
+		"build_plugin_name": String(_build_rule_summary(unit_id, region).get("plugin_name", "")),
+		"status_ids": _build_rule_summary(unit_id, region).get("status_ids", []),
+		"status_text": String(_build_rule_summary(unit_id, region).get("status_text", "")),
+		"reaction_ids": _build_rule_summary(unit_id, region).get("reaction_ids", []),
+		"reaction_text": String(_build_rule_summary(unit_id, region).get("reaction_text", "")),
+		"reaction_bonus": float(_build_rule_summary(unit_id, region).get("reaction_bonus", 0.0)),
 		"survival_bonus": _support_survival_bonus(),
 		"pressure_drop": maxf(0.0, baseline_pressure - effective_pressure),
 		"loss_rate": current_loss_rate,
@@ -391,6 +401,8 @@ func _apply_battle(seconds: float, efficiency: float) -> void:
 				"front_motion": "none"
 			})
 		else:
+			if _should_hold_readable_battle_report(region.id):
+				return
 			GameState.battle_report = _make_battle_report("idle", region, 0.0, 0.0, 0.0, field_total, reinforced, 0, {
 				"loss_reason": "no_order",
 				"front_motion": "none"
@@ -452,7 +464,6 @@ func _field_power(region) -> float:
 	return power
 
 func _apply_attrition(rate: float) -> int:
-	var plugin = ConfigDB.get_plugin(GameState.equipped_plugin)
 	var lost_total: int = 0
 	for unit_id in GameState.field_units.keys():
 		var unit = ConfigDB.get_unit(unit_id)
@@ -460,9 +471,7 @@ func _apply_attrition(rate: float) -> int:
 		if current <= 0:
 			continue
 		var toughness: float = 1.0 if unit == null else maxf(0.25, unit.toughness)
-		var survival_bonus: float = 0.0
-		if plugin != null and plugin.target_unit == unit_id:
-			survival_bonus = plugin.survival_bonus
+		var survival_bonus: float = _plugin_survival_bonus(unit_id) + _build_loss_reduction_bonus(unit_id, ConfigDB.get_region(GameState.active_region))
 		var effective_rate: float = maxf(0.0, rate / toughness - survival_bonus - _support_survival_bonus())
 		var lost: int = min(current, int(ceil(float(current) * effective_rate)))
 		if current > 1:
@@ -473,7 +482,8 @@ func _apply_attrition(rate: float) -> int:
 
 func _make_battle_report(mode: String, region, progress_gain: float, power: float, pressure: float, field_total: int, reinforced: int, lost: int, extras: Dictionary = {}, projection_unit_id: String = "zergling") -> Dictionary:
 	var preview: Dictionary = prestige_preview()
-	var projection: Dictionary = battle_projection(projection_unit_id)
+	var report_unit_id: String = _report_projection_unit(projection_unit_id)
+	var projection: Dictionary = battle_projection(report_unit_id)
 	var potential_retreat: int = _potential_retreat_return()
 	var report: Dictionary = {
 		"mode": mode,
@@ -492,6 +502,13 @@ func _make_battle_report(mode: String, region, progress_gain: float, power: floa
 		"effective_pressure": pressure,
 		"support_bonus": _battle_support_bonus(),
 		"plugin_bonus": _dominant_plugin_bonus(),
+		"build_plugin_id": String(projection.get("build_plugin_id", "")),
+		"build_plugin_name": String(projection.get("build_plugin_name", "")),
+		"status_ids": projection.get("status_ids", []),
+		"status_text": String(projection.get("status_text", "")),
+		"reaction_ids": projection.get("reaction_ids", []),
+		"reaction_text": String(projection.get("reaction_text", "")),
+		"reaction_bonus": float(projection.get("reaction_bonus", 0.0)),
 		"baseline_needed_reserve": int(projection.get("baseline_needed_reserve", 0)),
 		"hatch_missing_text": String(projection.get("hatch_missing_text", "")),
 		"reserve_shortfall": int(projection.get("reserve_shortfall", 0)),
@@ -509,11 +526,26 @@ func _make_battle_report(mode: String, region, progress_gain: float, power: floa
 		"preserved_loss_estimate": maxi(0, _field_total() - potential_retreat),
 		"next_target": _next_battle_target(),
 		"prestige_gain": int(preview.get("gain", 0)),
-		"prestige_ready": bool(preview.get("can_reset", false))
+		"prestige_ready": bool(preview.get("can_reset", false)),
+		"readable_until_msec": _readable_until_msec(mode)
 	}
 	for key in extras.keys():
 		report[key] = extras[key]
 	return report
+
+func _readable_until_msec(mode: String) -> int:
+	if mode == "idle":
+		return 0
+	return Time.get_ticks_msec() + int(READABLE_REPORT_HOLD_SECONDS * 1000.0)
+
+func _should_hold_readable_battle_report(region_id: String) -> bool:
+	var report: Dictionary = GameState.battle_report
+	var mode: String = String(report.get("mode", "idle"))
+	if mode == "idle" or mode == "empty":
+		return false
+	if String(report.get("region_id", region_id)) != region_id:
+		return false
+	return Time.get_ticks_msec() <= int(report.get("readable_until_msec", 0))
 
 func _battle_hint(region, power: float, pressure: float) -> String:
 	if region != null and region.id == FACTORY_ENTRY_REGION and _field_total() < FACTORY_ENTRY_WAVE_MIN:
@@ -522,7 +554,7 @@ func _battle_hint(region, power: float, pressure: float) -> String:
 		return "火焰炮塔怕爆裂虫，轨道哨戒怕甲壳卫士；脆皮强攻后注意撤离保全。"
 	if _field_total() < 6:
 		return "储备投放太少，先孵化或提高投放强度。"
-	if GameState.equipped_plugin == "":
+	if not _has_any_build_plugin():
 		return "装配穿刺脊突或酸化甲壳能改变这一场结果。"
 	if power < pressure * 0.8:
 		return "敌方装甲压制明显，升级神经尖塔/酸蚀喷泉补足螺旋和酶。"
@@ -531,7 +563,7 @@ func _battle_hint(region, power: float, pressure: float) -> String:
 func _battle_cause(_region, power: float, pressure: float) -> String:
 	if _field_total() < 6:
 		return "need_reserve"
-	if GameState.equipped_plugin == "":
+	if not _has_any_build_plugin():
 		return "need_plugin"
 	if power < pressure * 0.8:
 		return "need_intensity"
@@ -541,10 +573,10 @@ func _needed_reserve_for_region(unit_id: String, region) -> int:
 	var unit = ConfigDB.get_unit(unit_id)
 	if unit == null or region == null:
 		return PREPARE_TARGET_MIN
-	var pressure: float = _effective_pressure(region)
+	var pressure: float = _effective_pressure(region, unit_id)
 	var unit_power: float = maxf(0.1, unit.power * _region_unit_power_multiplier(unit_id, region))
 	var floor_target: int = PREPARE_TARGET_MIN if _battle_support_bonus() <= 0.001 and _plugin_damage_bonus(unit_id) <= 0.001 else PREPARE_TARGET_MIN - 1
-	if region.id == FACTORY_ENTRY_REGION and unit_id == FACTORY_ENTRY_UNIT and GameState.equipped_plugin == FACTORY_ENTRY_PLUGIN:
+	if region.id == FACTORY_ENTRY_REGION and unit_id == FACTORY_ENTRY_UNIT and _equipped_plugin_id_for_unit(unit_id) == FACTORY_ENTRY_PLUGIN:
 		floor_target = FACTORY_ENTRY_WAVE_MIN
 	return maxi(floor_target, int(ceil(pressure / unit_power)))
 
@@ -560,24 +592,25 @@ func _baseline_pressure(region) -> float:
 	var progress: float = float(GameState.region_progress.get(region.id, 0.0))
 	return maxf(1.0, region.enemy_pressure * (1.0 + progress / 150.0))
 
-func _effective_pressure(region) -> float:
+func _effective_pressure(region, unit_id: String = "") -> float:
 	var progress: float = float(GameState.region_progress.get(region.id, 0.0))
 	var pressure: float = maxf(1.0, region.enemy_pressure * (1.0 + progress / 150.0))
-	return maxf(1.0, pressure * (1.0 - _pressure_relief_bonus()))
+	return maxf(1.0, pressure * (1.0 - _pressure_relief_bonus() - _active_build_pressure_relief_bonus(region, unit_id)))
 
 func _battle_support_multiplier(unit_id: String) -> float:
 	return 1.0 + _battle_support_bonus() + _plugin_damage_bonus(unit_id)
 
 func _region_unit_power_multiplier(unit_id: String, region) -> float:
 	var unit = ConfigDB.get_unit(unit_id)
-	var bonus: float = 1.0 + _battle_support_bonus() + _plugin_damage_bonus(unit_id)
+	var build_summary: Dictionary = _build_rule_summary(unit_id, region)
+	var bonus: float = 1.0 + _battle_support_bonus() + _plugin_damage_bonus(unit_id) + float(build_summary.get("power_bonus", 0.0))
 	if unit != null and region != null and unit.damage_tag != "physical":
 		for enemy_id in region.enemy_ids:
 			var counter_enemy = ConfigDB.get_enemy(enemy_id)
 			if counter_enemy != null and counter_enemy.weakness_tag == unit.damage_tag:
 				bonus += 0.35
 				break
-	var plugin = ConfigDB.get_plugin(GameState.equipped_plugin)
+	var plugin = _equipped_plugin_for_unit(unit_id)
 	if plugin == null or plugin.target_unit != unit_id or region == null:
 		return bonus
 	for enemy_id in region.enemy_ids:
@@ -606,10 +639,7 @@ func _support_survival_bonus() -> float:
 	return minf(0.014, float(acid_level) * 0.003 + float(reflux_level) * 0.004)
 
 func _current_loss_rate_for_unit(unit_id: String) -> float:
-	var plugin = ConfigDB.get_plugin(GameState.equipped_plugin)
-	var plugin_survival: float = 0.0
-	if plugin != null and plugin.target_unit == unit_id:
-		plugin_survival = plugin.survival_bonus
+	var plugin_survival: float = _plugin_survival_bonus(unit_id) + _build_loss_reduction_bonus(unit_id, ConfigDB.get_region(GameState.active_region))
 	var unit = ConfigDB.get_unit(unit_id)
 	var toughness: float = 1.0 if unit == null else maxf(0.25, unit.toughness)
 	return maxf(0.0, 0.065 / toughness - plugin_survival - _support_survival_bonus())
@@ -634,10 +664,16 @@ func _potential_retreat_return() -> int:
 	return returned
 
 func _plugin_damage_bonus(unit_id: String) -> float:
-	var plugin = ConfigDB.get_plugin(GameState.equipped_plugin)
+	var plugin = _equipped_plugin_for_unit(unit_id)
 	if plugin == null or plugin.target_unit != unit_id:
 		return 0.0
 	return plugin.damage_bonus
+
+func _plugin_survival_bonus(unit_id: String) -> float:
+	var plugin = _equipped_plugin_for_unit(unit_id)
+	if plugin == null or plugin.target_unit != unit_id:
+		return 0.0
+	return plugin.survival_bonus
 
 func _dominant_plugin_bonus() -> float:
 	var best: float = 0.0
@@ -648,6 +684,150 @@ func _dominant_plugin_bonus() -> float:
 		if int(GameState.reserves.get(unit_id, 0)) > 0:
 			best = maxf(best, _plugin_damage_bonus(unit_id))
 	return best
+
+func build_summary_for_unit(unit_id: String, region_id: String = "") -> Dictionary:
+	var region = ConfigDB.get_region(region_id if region_id != "" else GameState.active_region)
+	return _build_rule_summary(unit_id, region)
+
+func _equip_plugin_to_unit_build(plugin) -> void:
+	if plugin == null:
+		return
+	var unit_id: String = String(plugin.target_unit)
+	if unit_id == "":
+		GameState.equipped_plugin = String(plugin.id)
+		return
+	if not GameState.unit_builds.has(unit_id) or typeof(GameState.unit_builds.get(unit_id)) != TYPE_DICTIONARY:
+		GameState.unit_builds[unit_id] = {"primary": ""}
+	var slot: String = String(plugin.build_slot) if String(plugin.build_slot) != "" else "primary"
+	GameState.unit_builds[unit_id][slot] = String(plugin.id)
+	GameState.equipped_plugin = String(plugin.id)
+
+func _equipped_plugin_id_for_unit(unit_id: String) -> String:
+	var build = GameState.unit_builds.get(unit_id, {})
+	if typeof(build) == TYPE_DICTIONARY:
+		var build_id: String = String(build.get("primary", ""))
+		if build_id != "":
+			return build_id
+	var plugin = ConfigDB.get_plugin(GameState.equipped_plugin)
+	if plugin != null and String(plugin.target_unit) == unit_id:
+		return GameState.equipped_plugin
+	return ""
+
+func _equipped_plugin_for_unit(unit_id: String):
+	var plugin_id: String = _equipped_plugin_id_for_unit(unit_id)
+	return null if plugin_id == "" else ConfigDB.get_plugin(plugin_id)
+
+func _has_any_build_plugin() -> bool:
+	if GameState.equipped_plugin != "":
+		return true
+	for unit_id in GameState.unit_builds.keys():
+		var build = GameState.unit_builds.get(unit_id, {})
+		if typeof(build) == TYPE_DICTIONARY and String(build.get("primary", "")) != "":
+			return true
+	return false
+
+func _build_rule_summary(unit_id: String, region) -> Dictionary:
+	var plugin = _equipped_plugin_for_unit(unit_id)
+	var result: Dictionary = {
+		"plugin_id": "",
+		"plugin_name": "",
+		"status_ids": [],
+		"status_text": "",
+		"reaction_ids": [],
+		"reaction_text": "",
+		"power_bonus": 0.0,
+		"pressure_relief_bonus": 0.0,
+		"loss_reduction_bonus": 0.0,
+		"reaction_bonus": 0.0
+	}
+	if plugin == null:
+		return result
+	result["plugin_id"] = String(plugin.id)
+	result["plugin_name"] = String(plugin.display_name)
+	var status_ids: Array[String] = _plugin_status_ids(plugin)
+	var status_labels: Array[String] = []
+	for status_id in status_ids:
+		var status = ConfigDB.get_status(status_id)
+		if status == null:
+			continue
+		result["power_bonus"] = float(result["power_bonus"]) + float(status.power_bonus)
+		result["pressure_relief_bonus"] = float(result["pressure_relief_bonus"]) + float(status.pressure_relief_bonus)
+		result["loss_reduction_bonus"] = float(result["loss_reduction_bonus"]) + float(status.loss_reduction_bonus)
+		status_labels.append(String(status.ui_label) if String(status.ui_label) != "" else String(status.display_name))
+	result["status_ids"] = status_ids
+	result["status_text"] = "状态：" + " / ".join(status_labels) if not status_labels.is_empty() else ""
+
+	var element_tag: String = _plugin_element_tag(plugin)
+	var reaction_labels: Array[String] = []
+	var reaction_ids: Array[String] = []
+	if region != null and element_tag != "":
+		for reaction_id in ConfigDB.get_reaction_ids():
+			var reaction = ConfigDB.get_reaction(reaction_id)
+			if reaction == null or String(reaction.element_tag) != element_tag:
+				continue
+			if not _region_has_weakness(region, String(reaction.target_weakness_tag)):
+				continue
+			reaction_ids.append(String(reaction.id))
+			reaction_labels.append(String(reaction.display_name))
+			result["power_bonus"] = float(result["power_bonus"]) + float(reaction.power_bonus)
+			result["pressure_relief_bonus"] = float(result["pressure_relief_bonus"]) + float(reaction.pressure_relief_bonus)
+			result["loss_reduction_bonus"] = float(result["loss_reduction_bonus"]) + float(reaction.loss_reduction_bonus)
+			result["reaction_bonus"] = float(result["reaction_bonus"]) + float(reaction.power_bonus) + float(reaction.pressure_relief_bonus) + float(reaction.loss_reduction_bonus)
+	result["reaction_ids"] = reaction_ids
+	result["reaction_text"] = "反应：" + " / ".join(reaction_labels) if not reaction_labels.is_empty() else ""
+	return result
+
+func _plugin_status_ids(plugin) -> Array[String]:
+	var ids: Array[String] = []
+	if plugin == null:
+		return ids
+	for id in plugin.status_ids:
+		ids.append(String(id))
+	if not ids.is_empty():
+		return ids
+	var element_tag: String = _plugin_element_tag(plugin)
+	match element_tag:
+		"acid":
+			ids.append("corroded")
+		"pierce":
+			ids.append("punctured")
+		"shell":
+			ids.append("hardened")
+		"bio":
+			ids.append("regenerating")
+	return ids
+
+func _plugin_element_tag(plugin) -> String:
+	if plugin == null:
+		return ""
+	if String(plugin.element_tag) != "":
+		return String(plugin.element_tag)
+	return String(plugin.counter_tag)
+
+func _region_has_weakness(region, weakness_tag: String) -> bool:
+	if region == null or weakness_tag == "":
+		return false
+	for enemy_id in region.enemy_ids:
+		var enemy = ConfigDB.get_enemy(enemy_id)
+		if enemy != null and String(enemy.weakness_tag) == weakness_tag:
+			return true
+	return false
+
+func _active_build_pressure_relief_bonus(region, unit_id: String = "") -> float:
+	if unit_id != "":
+		return float(_build_rule_summary(unit_id, region).get("pressure_relief_bonus", 0.0))
+	var best: float = 0.0
+	for id in ConfigDB.get_unit_ids():
+		if int(GameState.field_units.get(id, 0)) > 0 or int(GameState.reserves.get(id, 0)) > 0:
+			best = maxf(best, float(_build_rule_summary(id, region).get("pressure_relief_bonus", 0.0)))
+	return best
+
+func _build_loss_reduction_bonus(unit_id: String, region) -> float:
+	return float(_build_rule_summary(unit_id, region).get("loss_reduction_bonus", 0.0))
+
+func _unit_name(unit_id: String) -> String:
+	var unit = ConfigDB.get_unit(unit_id)
+	return unit.display_name if unit != null else unit_id
 
 func _next_battle_target() -> float:
 	if GameState.total_devour < PRESTIGE_VISIBLE_DEVOUR:
@@ -673,6 +853,13 @@ func _refresh_battle_projection(action: String) -> void:
 	report["pressure"] = float(report["effective_pressure"])
 	report["support_bonus"] = _battle_support_bonus()
 	report["plugin_bonus"] = _dominant_plugin_bonus()
+	report["build_plugin_id"] = String(projection.get("build_plugin_id", ""))
+	report["build_plugin_name"] = String(projection.get("build_plugin_name", ""))
+	report["status_ids"] = projection.get("status_ids", [])
+	report["status_text"] = String(projection.get("status_text", ""))
+	report["reaction_ids"] = projection.get("reaction_ids", [])
+	report["reaction_text"] = String(projection.get("reaction_text", ""))
+	report["reaction_bonus"] = float(projection.get("reaction_bonus", 0.0))
 	report["baseline_needed_reserve"] = int(projection.get("baseline_needed_reserve", 0))
 	report["hatch_missing_text"] = String(projection.get("hatch_missing_text", ""))
 	report["reserve_shortfall"] = int(projection.get("reserve_shortfall", 0))
@@ -734,6 +921,18 @@ func _field_total() -> int:
 		total += int(GameState.field_units.get(unit_id, 0))
 	return total
 
+func _report_projection_unit(default_unit_id: String) -> String:
+	if int(GameState.field_units.get(default_unit_id, 0)) > 0 or int(GameState.reserves.get(default_unit_id, 0)) > 0:
+		return default_unit_id
+	var best_unit_id: String = default_unit_id
+	var best_count: int = 0
+	for unit_id in ConfigDB.get_unit_ids():
+		var count: int = int(GameState.field_units.get(unit_id, 0)) + int(GameState.reserves.get(unit_id, 0))
+		if count > best_count:
+			best_count = count
+			best_unit_id = unit_id
+	return best_unit_id
+
 func _has_open_valve() -> bool:
 	for unit_id in GameState.deployment_intensity.keys():
 		if int(GameState.deployment_intensity.get(unit_id, 0)) > 0:
@@ -751,8 +950,8 @@ func _apply_factory_entry_staging(region_id: String, unit_id: String) -> String:
 	if unit == null or plugin == null:
 		return ""
 	if bool(GameState.region_entry_staged.get(FACTORY_ENTRY_REGION, false)):
-		if GameState.equipped_plugin != FACTORY_ENTRY_PLUGIN and bool(GameState.plugins_owned.get(FACTORY_ENTRY_PLUGIN, false)):
-			GameState.equipped_plugin = FACTORY_ENTRY_PLUGIN
+		if _equipped_plugin_id_for_unit(FACTORY_ENTRY_UNIT) != FACTORY_ENTRY_PLUGIN and bool(GameState.plugins_owned.get(FACTORY_ENTRY_PLUGIN, false)):
+			_equip_plugin_to_unit_build(plugin)
 		return ""
 	var changed := false
 	var costs: Dictionary = _scaled_costs(unit.resource_costs(), float(FACTORY_ENTRY_WAVE_MIN))
@@ -771,8 +970,8 @@ func _apply_factory_entry_staging(region_id: String, unit_id: String) -> String:
 	if not bool(GameState.plugins_owned.get(FACTORY_ENTRY_PLUGIN, false)) and GameState.spend({"helix": plugin.cost_helix}):
 		GameState.plugins_owned[FACTORY_ENTRY_PLUGIN] = true
 		changed = true
-	if GameState.equipped_plugin != FACTORY_ENTRY_PLUGIN and bool(GameState.plugins_owned.get(FACTORY_ENTRY_PLUGIN, false)):
-		GameState.equipped_plugin = FACTORY_ENTRY_PLUGIN
+	if _equipped_plugin_id_for_unit(FACTORY_ENTRY_UNIT) != FACTORY_ENTRY_PLUGIN and bool(GameState.plugins_owned.get(FACTORY_ENTRY_PLUGIN, false)):
+		_equip_plugin_to_unit_build(plugin)
 		changed = true
 	GameState.region_entry_staged[FACTORY_ENTRY_REGION] = true
 	return "破防回流已补足首轮刺蛇营养并装配穿刺脊突；左蓄兵，中过线强攻。" if changed else ""

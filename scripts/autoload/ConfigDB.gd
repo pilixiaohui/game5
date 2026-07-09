@@ -5,12 +5,16 @@ var units: Dictionary = {}
 var enemies: Dictionary = {}
 var plugins: Dictionary = {}
 var regions: Dictionary = {}
+var statuses: Dictionary = {}
+var reactions: Dictionary = {}
 
 const ORGAN_DIR := "res://data/organs"
 const UNIT_DIR := "res://data/units"
 const ENEMY_DIR := "res://data/enemies"
 const PLUGIN_DIR := "res://data/plugins"
 const REGION_DIR := "res://data/regions"
+const STATUS_DIR := "res://data/statuses"
+const REACTION_DIR := "res://data/reactions"
 
 func _ready() -> void:
 	load_all()
@@ -21,9 +25,11 @@ func load_all() -> void:
 	enemies = _load_index_from_dir(ENEMY_DIR)
 	plugins = _load_index_from_dir(PLUGIN_DIR)
 	regions = _load_index_from_dir(REGION_DIR)
+	statuses = _load_index_from_dir(STATUS_DIR)
+	reactions = _load_index_from_dir(REACTION_DIR)
 
 func ensure_loaded() -> void:
-	if organs.is_empty() or units.is_empty() or regions.is_empty():
+	if organs.is_empty() or units.is_empty() or regions.is_empty() or statuses.is_empty() or reactions.is_empty():
 		load_all()
 
 func _load_index_from_dir(dir_path: String) -> Dictionary:
@@ -72,6 +78,14 @@ func get_region_ids() -> Array[String]:
 	ensure_loaded()
 	return _sorted_ids(regions)
 
+func get_status_ids() -> Array[String]:
+	ensure_loaded()
+	return _sorted_ids(statuses)
+
+func get_reaction_ids() -> Array[String]:
+	ensure_loaded()
+	return _sorted_ids(reactions)
+
 func _sorted_ids(index: Dictionary) -> Array[String]:
 	var ids: Array[String] = []
 	for id in index.keys():
@@ -111,3 +125,11 @@ func get_plugin(id: String):
 func get_region(id: String):
 	ensure_loaded()
 	return regions.get(id)
+
+func get_status(id: String):
+	ensure_loaded()
+	return statuses.get(id)
+
+func get_reaction(id: String):
+	ensure_loaded()
+	return reactions.get(id)

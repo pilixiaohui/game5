@@ -10,4 +10,7 @@ extends Resource
 @export var damage_bonus: float = 0.0
 @export var survival_bonus: float = 0.0
 @export var counter_tag: String = ""
+@export var element_tag: String = ""
+@export var status_ids: Array[String] = []
+@export var build_slot: String = "primary"
 @export var unlock_devour: float = 0.0

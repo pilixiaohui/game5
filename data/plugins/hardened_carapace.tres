@@ -13,4 +13,6 @@ cost_helix = 14.0
 damage_bonus = 0.10
 survival_bonus = 0.035
 counter_tag = "shell"
+element_tag = "shell"
+status_ids = Array[String](["hardened"])
 unlock_devour = 150.0

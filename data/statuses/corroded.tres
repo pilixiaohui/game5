@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="StatusConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/StatusConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "corroded"
+display_name = "腐蚀"
+description = "酸液削弱装甲与火力阵地，提升推进并压低敌压。"
+sort_order = 10
+element_tag = "acid"
+ui_label = "腐蚀破甲"
+power_bonus = 0.06
+pressure_relief_bonus = 0.02
+loss_reduction_bonus = 0.0

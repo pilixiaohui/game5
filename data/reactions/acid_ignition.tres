@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="ElementReactionConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/ElementReactionConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "acid_ignition"
+display_name = "酸蚀爆燃"
+description = "酸液触发火焰炮塔燃料泄压，爆裂虫推进更快且敌压下降。"
+sort_order = 10
+element_tag = "acid"
+target_weakness_tag = "acid"
+status_ids = Array[String](["corroded"])
+power_bonus = 0.10
+pressure_relief_bonus = 0.04
+loss_reduction_bonus = 0.0
