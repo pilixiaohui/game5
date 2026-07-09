@@ -60,6 +60,7 @@ func _run() -> void:
 		_expect(guard_button.autowrap_mode == TextServer.AUTOWRAP_ARBITRARY, "unit buttons should wrap instead of widening")
 
 	main.queue_free()
+	await process_frame
 	_finish()
 
 func _find_scroll_container(node: Node) -> ScrollContainer:

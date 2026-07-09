@@ -6,6 +6,8 @@ const SaveServiceScript := preload("res://scripts/autoload/SaveService.gd")
 const SimulationServiceScript := preload("res://scripts/autoload/SimulationService.gd")
 const BattlefieldViewScript := preload("res://scripts/ui/BattlefieldView.gd")
 const BattleCommandPanelScript := preload("res://scripts/ui/BattleCommandPanel.gd")
+const UnitPool2DScript := preload("res://scripts/battle/UnitPool2D.gd")
+const BattleDirectorScript := preload("res://scripts/battle/BattleDirector.gd")
 const MainScript := preload("res://scripts/ui/Main.gd")
 const PlayerCommandServiceScript := preload("res://scripts/services/PlayerCommandService.gd")
 
@@ -72,6 +74,7 @@ func _run() -> void:
 	_test_stage1_manifest_counts_and_unique_ids()
 	_test_stage1_old_save_defaults_new_content()
 	_test_stage1_public_ui_visible_content_and_rule_effects()
+	_test_stage2_battle_presentation_pool_and_rule_authority()
 	_test_plugin_ab_comparison()
 	_test_offline_cap()
 	_test_save_integrity()
@@ -694,7 +697,7 @@ func _test_mobile_readability_and_completed_factory_guidance() -> void:
 	_assert(guard_button != null and guard_button.text.find("稳推进/低损耗") >= 0, "carapace guard mobile label should expose the short role tag")
 	if baneling_button != null:
 		_assert(baneling_button.autowrap_mode == TextServer.AUTOWRAP_ARBITRARY, "unit hatch buttons should wrap instead of widening the 540px layout")
-	main.queue_free()
+	main.free()
 
 func _find_scroll_container(node: Node) -> ScrollContainer:
 	if node is ScrollContainer:
@@ -822,7 +825,7 @@ func _test_stage1_public_ui_visible_content_and_rule_effects() -> void:
 	_assert(region_buttons.size() >= 5 and region_buttons.has("chitin_pass") and region_buttons.has("orbital_relay"), "formal UI should show five-plus scanned region buttons")
 	_assert(String(unit_buttons["roach"].text).find("蟑螂") >= 0 and String(unit_buttons["mutalisk"].text).find("飞螳") >= 0, "new unit buttons should expose player-readable names")
 	_assert(String(plugin_buttons["burrowed_plating"].text).find("蟑螂") >= 0 and String(plugin_buttons["glaive_rebound"].text).find("飞螳") >= 0, "new plugin buttons should expose use targets")
-	main.queue_free()
+	main.free()
 
 	_assert(SimulationService.hatch_unit("roach", 2), "new roach should hatch through real resource costs after unlock")
 	_assert(SimulationService.hatch_unit("mutalisk", 1), "new mutalisk should hatch through real resource costs after unlock")
@@ -867,6 +870,59 @@ func _test_plugin_ab_comparison() -> void:
 	var piercing_progress := _simulate_factory_push("piercing_spines")
 	_assert(piercing_progress > baseline_progress, "piercing_spines should produce higher factory progress than identical no-plugin state")
 	_assert(piercing_progress - baseline_progress >= 5.0, "piercing_spines should create a meaningful progress delta")
+
+func _test_stage2_battle_presentation_pool_and_rule_authority() -> void:
+	var pool := UnitPool2DScript.new()
+	root.add_child(pool)
+	var unit := pool.spawn_unit("zergling", Vector2(12.0, 18.0), Color.WHITE)
+	_assert(pool.active_count() == 1, "stage2 UnitPool2D should spawn a visible active presentation unit")
+	pool.recycle(unit, "loss")
+	var pool_stats: Dictionary = pool.stats()
+	_assert(int(pool_stats.get("active_count", -1)) == 0, "stage2 UnitPool2D recycle should remove active unit from presentation tree")
+	_assert(int(pool_stats.get("pool_count", -1)) == 1, "stage2 UnitPool2D recycle should keep reusable pooled node")
+	_assert(int(pool_stats.get("lost_recycled_total", 0)) == 1, "stage2 UnitPool2D should count loss recycling separately")
+	pool.clear_pool()
+	_assert(pool.pool_count() == 0, "stage2 UnitPool2D clear_pool should release off-tree pooled nodes")
+	pool.free()
+
+	var director := BattleDirectorScript.new()
+	root.add_child(director)
+	var lane := Rect2(Vector2(24.0, 66.0), Vector2(492.0, 126.0))
+	var advance_snapshot := {
+		"mode": "advance",
+		"front_motion": "forward",
+		"progress": 18.0,
+		"field_total": 10,
+		"unit_fields": {"zergling": 7, "hydralisk": 3},
+		"prepared_reserve": 10,
+		"needed_reserve": 5,
+		"reinforced": 0,
+		"lost": 0
+	}
+	director.update_snapshot(advance_snapshot, lane)
+	_assert(director.active_count() >= 30, "stage2 BattleDirector should render at least 30 units for a strong reproducible battle")
+	var before_loss_recycled := int(director.presentation_stats().get("lost_recycled_total", 0))
+	advance_snapshot["lost"] = 4
+	director.update_snapshot(advance_snapshot, lane)
+	_assert(int(director.presentation_stats().get("lost_recycled_total", 0)) > before_loss_recycled, "stage2 BattleDirector should recycle presentation bodies for macro loss events")
+	var before_retreat_recycled := int(director.presentation_stats().get("retreat_recycled_total", 0))
+	advance_snapshot["mode"] = "retreat"
+	advance_snapshot["retreat_value"] = 7
+	advance_snapshot["retreat_field_before"] = 10
+	advance_snapshot["retreat_token"] = 1
+	director.update_snapshot(advance_snapshot, lane)
+	_assert(director.active_count() == 0, "stage2 BattleDirector should clear active presentation units on retreat")
+	_assert(int(director.presentation_stats().get("retreat_recycled_total", 0)) > before_retreat_recycled, "stage2 BattleDirector should count retreat recycling")
+	director.free()
+
+	var director_source := FileAccess.get_file_as_string("res://scripts/battle/BattleDirector.gd")
+	var pool_source := FileAccess.get_file_as_string("res://scripts/battle/UnitPool2D.gd")
+	var view_source := FileAccess.get_file_as_string("res://scripts/ui/BattlefieldView.gd")
+	_assert(director_source.find("SimulationService") < 0, "stage2 BattleDirector must not call macro simulation")
+	_assert(pool_source.find("SimulationService") < 0 and pool_source.find("GameState") < 0, "stage2 UnitPool2D must stay presentation-only")
+	for forbidden in ["GameState.resources", "GameState.reserves", "GameState.field_units", "GameState.region_progress", "GameState.total_devour", "GameState.spend", "GameState.add_resource"]:
+		_assert(director_source.find(forbidden) < 0, "stage2 BattleDirector must not own macro state mutation: %s" % forbidden)
+		_assert(view_source.find(forbidden) < 0, "stage2 BattlefieldView must not mutate macro state directly: %s" % forbidden)
 
 func _simulate_factory_push(plugin_id: String) -> float:
 	GameState.reset_new_game(false)

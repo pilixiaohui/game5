@@ -2,6 +2,8 @@ extends Control
 
 signal command_requested(action: String)
 
+const BattleDirectorScript := preload("res://scripts/battle/BattleDirector.gd")
+
 const BG_COLOR := Color(0.045, 0.055, 0.065)
 const LANE_COLOR := Color(0.12, 0.14, 0.16)
 const HIVE_COLOR := Color(0.16, 0.48, 0.30)
@@ -18,14 +20,19 @@ var _retreat_hold_remaining: float = 0.0
 var _held_retreat_return: int = 0
 var _held_retreat_field_before: int = 0
 var _held_preserved_loss: int = 0
+var _battle_director
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	custom_minimum_size = Vector2(0.0, 304.0)
+	_battle_director = BattleDirectorScript.new()
+	_battle_director.name = "BattleDirector"
+	add_child(_battle_director)
 	set_process(true)
 
 func set_snapshot(snapshot: Dictionary) -> void:
 	_snapshot = snapshot
+	_sync_presentation_layer()
 	if String(snapshot.get("mode", "")) == "complete":
 		_retreat_hold_remaining = 0.0
 		_held_retreat_return = 0
@@ -51,6 +58,16 @@ func _process(delta: float) -> void:
 			_held_retreat_field_before = 0
 			_held_preserved_loss = 0
 	queue_redraw()
+
+func presentation_active_count() -> int:
+	if _battle_director == null:
+		return 0
+	return _battle_director.active_count()
+
+func presentation_stats() -> Dictionary:
+	if _battle_director == null:
+		return {}
+	return _battle_director.presentation_stats()
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
@@ -126,7 +143,7 @@ func _draw() -> void:
 	var command_hint: String = "点击切换下一防线" if mode == "complete" and String(_snapshot.get("next_region_id", "")) != "" else "左蓄兵  中强攻  右撤离"
 	draw_string(font, Vector2(maxf(184.0, size.x - 182.0), 26.0), command_hint, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, Color(0.62, 0.78, 0.82))
 
-	var lane := Rect2(24.0, 66.0, maxf(10.0, size.x - 48.0), 126.0)
+	var lane := _battle_lane_rect()
 	draw_rect(lane, LANE_COLOR, true)
 	var front_x: float = lane.position.x + lane.size.x * progress / 100.0
 	var hive_rect := Rect2(lane.position, Vector2(max(8.0, front_x - lane.position.x), lane.size.y))
@@ -354,6 +371,14 @@ func _draw_units(lane: Rect2, front_x: float, front_motion: String, mode: String
 			pos + Vector2(-7.0, 6.0)
 		])
 		draw_colored_polygon(points, HYDRALISK_COLOR)
+
+func _battle_lane_rect() -> Rect2:
+	return Rect2(24.0, 66.0, maxf(10.0, size.x - 48.0), 126.0)
+
+func _sync_presentation_layer() -> void:
+	if _battle_director == null:
+		return
+	_battle_director.update_snapshot(_snapshot, _battle_lane_rect())
 
 func _draw_event_feedback(lane: Rect2, front_x: float, reinforced: int, lost: int, returned: int, mode: String, front_motion: String, retreat_value: int, retreat_field_before: int, preserved_loss_estimate: int) -> void:
 	if reinforced > 0:

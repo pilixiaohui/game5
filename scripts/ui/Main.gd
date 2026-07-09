@@ -436,6 +436,8 @@ func _battlefield_snapshot() -> Dictionary:
 	var returned: int = int(report.get("returned", 0))
 	var report_retreat_field: int = int(report.get("retreat_field_before", 0))
 	var active_intensity: int = int(GameState.deployment_intensity.get(unit_id, 0))
+	var unit_fields: Dictionary = _unit_field_counts()
+	var field_total: int = _unit_count_total(unit_fields)
 	var display_mode: String = _battle_display_mode(report_mode, live_shortfall, live_ready, projection_needed, active_intensity, live_retreat_field)
 	if region_complete:
 		display_mode = "complete"
@@ -458,6 +460,8 @@ func _battlefield_snapshot() -> Dictionary:
 		"pressure": pressure,
 		"reinforced": int(report.get("reinforced", 0)),
 		"lost": int(report.get("lost", 0)),
+		"field_total": field_total,
+		"unit_fields": unit_fields,
 		"zergling_field": int(GameState.field_units.get("zergling", 0)),
 		"hydralisk_field": int(GameState.field_units.get("hydralisk", 0)),
 		"zergling_reserve": int(GameState.reserves.get("zergling", 0)),
@@ -498,6 +502,20 @@ func _battlefield_snapshot() -> Dictionary:
 		"prestige_gain": int(projection.get("prestige_gain", report.get("prestige_gain", 0))),
 		"prestige_ready": bool(projection.get("prestige_ready", report.get("prestige_ready", false)))
 	}
+
+func _unit_field_counts() -> Dictionary:
+	var counts: Dictionary = {}
+	for id in _unit_ids():
+		var count := int(GameState.field_units.get(id, 0))
+		if count > 0:
+			counts[id] = count
+	return counts
+
+func _unit_count_total(counts: Dictionary) -> int:
+	var total := 0
+	for id in counts.keys():
+		total += int(counts.get(id, 0))
+	return total
 
 func _battle_display_mode(report_mode: String, live_shortfall: int, live_ready: int, projection_needed: int, active_intensity: int, live_retreat_field: int) -> String:
 	if projection_needed > 0 and live_ready >= projection_needed and live_shortfall <= 0:
