@@ -24,7 +24,8 @@ var _battle_director
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
-	custom_minimum_size = Vector2(0.0, 304.0)
+	clip_contents = true
+	custom_minimum_size = Vector2(0.0, 326.0)
 	_battle_director = BattleDirectorScript.new()
 	_battle_director.name = "BattleDirector"
 	add_child(_battle_director)
@@ -138,10 +139,13 @@ func _draw() -> void:
 	var prestige_ready: bool = bool(_snapshot.get("prestige_ready", false))
 	mode = _display_mode(mode, prepared_reserve, needed_reserve, reserve_shortfall)
 
-	draw_string(font, Vector2(18.0, 26.0), "%s  %.1f%%" % [region_name, progress], HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size + 2, Color(0.90, 0.96, 0.92))
-	draw_string(font, Vector2(18.0, 47.0), _mode_text(mode, power, pressure, returned, prepared_reserve, needed_reserve, projection_unit_name), HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, _front_color(mode))
 	var command_hint: String = "点击切换下一防线" if mode == "complete" and String(_snapshot.get("next_region_id", "")) != "" else "左蓄兵  中强攻  右撤离"
-	draw_string(font, Vector2(maxf(184.0, size.x - 182.0), 26.0), command_hint, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, Color(0.62, 0.78, 0.82))
+	var hint_width: float = minf(176.0, size.x - 36.0)
+	var hint_x: float = maxf(18.0, size.x - 18.0 - hint_width)
+	var title_width: float = maxf(120.0, hint_x - 28.0)
+	draw_string(font, Vector2(18.0, 26.0), "%s  %.1f%%" % [region_name, progress], HORIZONTAL_ALIGNMENT_LEFT, title_width, font_size + 2, Color(0.90, 0.96, 0.92))
+	draw_string(font, Vector2(18.0, 47.0), _mode_text(mode, power, pressure, returned, prepared_reserve, needed_reserve, projection_unit_name), HORIZONTAL_ALIGNMENT_LEFT, size.x - 36.0, font_size, _front_color(mode))
+	draw_string(font, Vector2(hint_x, 26.0), command_hint, HORIZONTAL_ALIGNMENT_RIGHT, hint_width, font_size, Color(0.62, 0.78, 0.82))
 
 	var lane := _battle_lane_rect()
 	draw_rect(lane, LANE_COLOR, true)
@@ -178,11 +182,13 @@ func _draw() -> void:
 	var z_reserve: int = int(_snapshot.get("zergling_reserve", 0))
 	var h_reserve: int = int(_snapshot.get("hydralisk_reserve", 0))
 	var plugin_name: String = String(_snapshot.get("plugin_name", ""))
+	var status_text: String = String(_snapshot.get("status_text", ""))
+	var reaction_text: String = String(_snapshot.get("reaction_text", ""))
 	if unit_readout_text == "":
 		unit_readout_text = "场上 跳虫 %d / 刺蛇 %d    储备 %d / %d" % [z_field, h_field, z_reserve, h_reserve]
-	draw_string(font, Vector2(lane.position.x, meter_y + 38.0), unit_readout_text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, Color(0.82, 0.90, 0.86))
-	var event_text: String = _event_text(reinforced, lost, returned, loss_reason, progress_gain, plugin_name, prepared_reserve, needed_reserve, cause, support_bonus, plugin_bonus, effective_pressure, reserve_shortfall, hatch_fill_count, pressure_drop, loss_rate, baseline_loss_rate, loss_reduction, retreat_display_value, loss_saved_estimate, protected_estimate)
-	draw_string(font, Vector2(lane.position.x, meter_y + 60.0), event_text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, Color(0.78, 0.84, 0.86))
+	var next_text_y: float = _draw_wrapped_text(font, Vector2(lane.position.x, meter_y + 34.0), unit_readout_text, lane.size.x, font_size, Color(0.82, 0.90, 0.86), 2)
+	var event_text: String = _event_text(reinforced, lost, returned, loss_reason, progress_gain, plugin_name, prepared_reserve, needed_reserve, cause, support_bonus, plugin_bonus, effective_pressure, reserve_shortfall, hatch_fill_count, pressure_drop, loss_rate, baseline_loss_rate, loss_reduction, retreat_display_value, loss_saved_estimate, protected_estimate, status_text, reaction_text)
+	_draw_wrapped_text(font, Vector2(lane.position.x, next_text_y + 2.0), event_text, lane.size.x, font_size, Color(0.78, 0.84, 0.86), 2)
 
 func _draw_enemy_line(lane: Rect2, pressure: float, mode: String) -> void:
 	var count: int = clampi(int(ceil(pressure / 5.0)), 3, 9)
@@ -246,6 +252,36 @@ func _draw_wave_meter(lane: Rect2, prepared_reserve: int, needed_reserve: int, b
 			var miss_color := Color(1.0, 0.42, 0.24, 0.75 + _pulse * 0.2)
 			draw_line(miss_center + Vector2(-5.0, -5.0), miss_center + Vector2(5.0, 5.0), miss_color, 2.0)
 			draw_line(miss_center + Vector2(-5.0, 5.0), miss_center + Vector2(5.0, -5.0), miss_color, 2.0)
+
+func _draw_wrapped_text(font: Font, position: Vector2, text: String, max_width: float, font_size: int, color: Color, max_lines: int) -> float:
+	var lines: Array[String] = _wrap_for_mobile_text(text, maxi(12, int(floor(max_width / 12.0))), max_lines)
+	var line_height: float = float(font_size + 5)
+	for i in range(lines.size()):
+		draw_string(font, position + Vector2(0.0, line_height * float(i)), lines[i], HORIZONTAL_ALIGNMENT_LEFT, max_width, font_size, color)
+	return position.y + line_height * float(lines.size())
+
+func _wrap_for_mobile_text(text: String, max_chars: int, max_lines: int) -> Array[String]:
+	var lines: Array[String] = []
+	for raw_part in text.replace("    ", "\n").split("\n"):
+		var remaining := String(raw_part).strip_edges()
+		while remaining.length() > 0 and lines.size() < max_lines:
+			if remaining.length() <= max_chars:
+				lines.append(remaining)
+				break
+			var cut: int = _mobile_text_cut_index(remaining, max_chars)
+			lines.append(remaining.substr(0, cut).strip_edges())
+			remaining = remaining.substr(cut).strip_edges()
+	if lines.size() > max_lines:
+		lines = lines.slice(0, max_lines)
+	return lines
+
+func _mobile_text_cut_index(text: String, max_chars: int) -> int:
+	var best: int = -1
+	for marker in [" / ", "；", "，", " "]:
+		var index: int = text.rfind(marker, max_chars)
+		if index > 8:
+			best = maxi(best, index + marker.length())
+	return best if best > 0 else max_chars
 
 func _draw_support_icons(lane: Rect2, support_bonus: float, plugin_bonus: float, prestige_ready: bool, baseline_needed_reserve: int, needed_reserve: int, pressure_drop: float, loss_reduction: float) -> void:
 	var start := Vector2(lane.position.x + 18.0, lane.position.y + 14.0)
@@ -465,7 +501,7 @@ func _front_color(mode: String) -> Color:
 		_:
 			return FRONT_IDLE
 
-func _event_text(reinforced: int, lost: int, returned: int, loss_reason: String, progress_gain: float, _plugin_name: String, _prepared_reserve: int, _needed_reserve: int, cause: String, _support_bonus: float, _plugin_bonus: float, _effective_pressure: float, _reserve_shortfall: int, _hatch_fill_count: int, _pressure_drop: float, _loss_rate: float, _baseline_loss_rate: float, _loss_reduction: float, retreat_value: int, _loss_saved_estimate: int, _protected_estimate: int) -> String:
+func _event_text(reinforced: int, lost: int, returned: int, loss_reason: String, progress_gain: float, _plugin_name: String, _prepared_reserve: int, _needed_reserve: int, cause: String, _support_bonus: float, _plugin_bonus: float, _effective_pressure: float, _reserve_shortfall: int, _hatch_fill_count: int, _pressure_drop: float, _loss_rate: float, _baseline_loss_rate: float, _loss_reduction: float, retreat_value: int, _loss_saved_estimate: int, _protected_estimate: int, status_text: String = "", reaction_text: String = "") -> String:
 	var parts: Array[String] = []
 	if reinforced > 0:
 		parts.append("补位 +%d" % reinforced)
@@ -479,6 +515,10 @@ func _event_text(reinforced: int, lost: int, returned: int, loss_reason: String,
 	var cause_text: String = _cause_text(cause)
 	if cause_text != "":
 		parts.append(cause_text)
+	if reaction_text != "":
+		parts.append(reaction_text)
+	elif status_text != "":
+		parts.append(status_text)
 	return " / ".join(parts) if not parts.is_empty() else _loss_reason_text(loss_reason)
 
 func _retreat_badge_visible_return(returned: int = -1, retreat_value: int = -1) -> int:

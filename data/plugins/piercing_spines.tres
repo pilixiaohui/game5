@@ -13,4 +13,6 @@ cost_helix = 5.0
 damage_bonus = 0.45
 survival_bonus = 0.006
 counter_tag = "pierce"
+element_tag = "pierce"
+status_ids = Array[String](["punctured"])
 unlock_devour = 0.0

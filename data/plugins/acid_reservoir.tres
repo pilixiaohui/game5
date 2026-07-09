@@ -13,4 +13,6 @@ cost_helix = 12.0
 damage_bonus = 0.38
 survival_bonus = 0.0
 counter_tag = "acid"
+element_tag = "acid"
+status_ids = Array[String](["corroded"])
 unlock_devour = 120.0

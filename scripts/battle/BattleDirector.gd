@@ -1,5 +1,5 @@
 class_name BattleDirector
-extends Node
+extends Node2D
 
 signal battle_tick(region_id: String, progress: float)
 
@@ -7,6 +7,7 @@ const UnitPool2DScript := preload("res://scripts/battle/UnitPool2D.gd")
 
 const MAX_ACTIVE_UNITS := 48
 const STRONG_VISIBLE_FLOOR := 30
+const UNIT_VISUAL_RADIUS := 14.0
 const UNIT_COLORS := {
 	"zergling": Color(0.44, 0.95, 0.58),
 	"hydralisk": Color(0.34, 0.74, 1.0),
@@ -95,9 +96,9 @@ func _process(delta: float) -> void:
 		var lane_index := int(node.get_meta("lane_index", 0))
 		var row_y := _row_y(lane_index)
 		var target_x := _target_x_for(node, mode, front_motion, front_x)
-		var target := Vector2(target_x, row_y + sin(age * 3.4 + float(lane_index)) * 3.0)
+		var target := _clamp_to_lane(Vector2(target_x, row_y + sin(age * 3.4 + float(lane_index)) * 3.0))
 		var speed := float(node.get_meta("speed", 58.0))
-		node.position = node.position.move_toward(target, speed * delta)
+		node.position = _clamp_to_lane(node.position.move_toward(target, speed * delta))
 
 func _ensure_pool() -> void:
 	if _unit_pool != null:
@@ -130,7 +131,7 @@ func _match_active_count(desired: int) -> void:
 	while _unit_pool.active_count() < desired:
 		var unit_id := _next_unit_id()
 		var lane_index := _spawn_cursor % 6
-		var spawn_pos := Vector2(_lane_rect.position.x + 14.0 + float(lane_index % 3) * 8.0, _row_y(lane_index))
+		var spawn_pos := _clamp_to_lane(Vector2(_lane_rect.position.x + 14.0 + float(lane_index % 3) * 8.0, _row_y(lane_index)))
 		_unit_pool.spawn_unit(unit_id, spawn_pos, _unit_color(unit_id), lane_index)
 		_spawn_cursor += 1
 
@@ -156,6 +157,17 @@ func _row_y(index: int) -> float:
 	var rows := 6
 	var gap := _lane_rect.size.y / float(rows + 1)
 	return _lane_rect.position.y + gap * float((index % rows) + 1)
+
+func _clamp_to_lane(position: Vector2) -> Vector2:
+	var min_x := _lane_rect.position.x + UNIT_VISUAL_RADIUS
+	var max_x := _lane_rect.end.x - UNIT_VISUAL_RADIUS
+	var min_y := _lane_rect.position.y + UNIT_VISUAL_RADIUS
+	var max_y := _lane_rect.end.y - UNIT_VISUAL_RADIUS
+	if max_x < min_x:
+		max_x = min_x
+	if max_y < min_y:
+		max_y = min_y
+	return Vector2(clampf(position.x, min_x, max_x), clampf(position.y, min_y, max_y))
 
 func _target_x_for(node: Node2D, mode: String, front_motion: String, front_x: float) -> float:
 	var lane_index := int(node.get_meta("lane_index", 0))

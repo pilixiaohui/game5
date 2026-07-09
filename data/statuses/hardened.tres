@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="StatusConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/StatusConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "hardened"
+display_name = "硬化"
+description = "甲壳层吸收狙击与反推，让厚皮单位更少损耗。"
+sort_order = 30
+element_tag = "shell"
+ui_label = "硬化减损"
+power_bonus = 0.0
+pressure_relief_bonus = 0.0
+loss_reduction_bonus = 0.018

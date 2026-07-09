@@ -3,6 +3,7 @@ extends Control
 const BattlefieldViewScript := preload("res://scripts/ui/BattlefieldView.gd")
 const BattleCommandPanelScript := preload("res://scripts/ui/BattleCommandPanel.gd")
 const PlayerCommandServiceScript := preload("res://scripts/services/PlayerCommandService.gd")
+const MOBILE_CONTENT_WIDTH := 520.0
 
 var ConfigDB
 var GameState
@@ -10,6 +11,11 @@ var SaveService
 var SimulationService
 var _command_service
 var _resource_label: Label
+var _session_label: Label
+var _session_result_label: Label
+var _start_button: Button
+var _continue_button: Button
+var _restart_button: Button
 var _guide_label: Label
 var _feedback_label: Label
 var _offline_label: Label
@@ -77,7 +83,8 @@ func _build_ui() -> void:
 	add_child(scroll)
 
 	var margin := MarginContainer.new()
-	margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	margin.custom_minimum_size = Vector2(MOBILE_CONTENT_WIDTH, 0)
+	margin.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	margin.add_theme_constant_override("margin_left", 10)
 	margin.add_theme_constant_override("margin_top", 8)
 	margin.add_theme_constant_override("margin_right", 10)
@@ -85,7 +92,8 @@ func _build_ui() -> void:
 	scroll.add_child(margin)
 
 	var root := VBoxContainer.new()
-	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	root.custom_minimum_size = Vector2(MOBILE_CONTENT_WIDTH - 20.0, 0)
+	root.size_flags_horizontal = Control.SIZE_FILL
 	root.add_theme_constant_override("separation", 12)
 	margin.add_child(root)
 
@@ -100,6 +108,43 @@ func _build_ui() -> void:
 	promise.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	promise.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(promise)
+
+	_session_label = _make_label("")
+	_session_label.add_theme_color_override("font_color", Color(0.84, 0.93, 0.88))
+	root.add_child(_session_label)
+
+	var entry_row := HBoxContainer.new()
+	entry_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	entry_row.add_theme_constant_override("separation", 6)
+	_start_button = _make_button("开始首局")
+	_start_button.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_start_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_start_button.pressed.connect(func() -> void:
+		_ensure_command_service()
+		_command_service.start_first_session()
+	)
+	_continue_button = _make_button("继续存档")
+	_continue_button.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_continue_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_continue_button.pressed.connect(func() -> void:
+		_ensure_command_service()
+		_command_service.load_and_settle()
+	)
+	_restart_button = _make_button("重开首局")
+	_restart_button.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_restart_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_restart_button.pressed.connect(func() -> void:
+		_ensure_command_service()
+		_command_service.new_game_and_save()
+	)
+	entry_row.add_child(_start_button)
+	entry_row.add_child(_continue_button)
+	entry_row.add_child(_restart_button)
+	root.add_child(entry_row)
+
+	_session_result_label = _make_label("")
+	_session_result_label.add_theme_color_override("font_color", Color(0.78, 0.84, 0.94))
+	root.add_child(_session_result_label)
 
 	_guide_label = _make_label("")
 	_guide_label.add_theme_color_override("font_color", Color(0.70, 0.88, 1.0))
@@ -194,6 +239,7 @@ func _build_ui() -> void:
 	_add_section(root, "构筑插件")
 	for plugin_id in _plugin_ids():
 		var button := _make_button("")
+		button.custom_minimum_size = Vector2(0, 122)
 		button.pressed.connect(func(id: String = plugin_id) -> void:
 			_ensure_command_service()
 			_command_service.buy_or_equip_plugin(id)
@@ -233,6 +279,10 @@ func _build_ui() -> void:
 	)
 	root.add_child(new_button)
 
+	var mobile_bottom_spacer := Control.new()
+	mobile_bottom_spacer.custom_minimum_size = Vector2(0, 180)
+	root.add_child(mobile_bottom_spacer)
+
 func _refresh() -> void:
 	GameState.ensure_config_defaults()
 	var battle_snapshot: Dictionary = _battlefield_snapshot()
@@ -244,6 +294,8 @@ func _refresh() -> void:
 		GameState.resources.get("mutation", 0.0),
 		GameState.total_devour
 	]
+	_session_label.text = _first_version_session_text(battle_snapshot)
+	_session_result_label.text = _first_version_result_text(battle_snapshot)
 	_guide_label.text = _next_step_text()
 	_feedback_label.text = "反馈：%s" % _display_feedback(battle_snapshot)
 	_offline_label.text = _offline_text()
@@ -342,7 +394,7 @@ func _refresh_plugins() -> void:
 		var plugin = ConfigDB.get_plugin(plugin_id)
 		var button: Button = _plugin_buttons[plugin_id]
 		var owned := bool(GameState.plugins_owned.get(plugin_id, false))
-		var equipped: bool = GameState.equipped_plugin == plugin_id
+		var equipped: bool = _plugin_equipped(plugin_id)
 		var costs: Dictionary = {"helix": plugin.cost_helix}
 		button.disabled = (not owned and not GameState.can_spend(costs)) or GameState.total_devour < plugin.unlock_devour
 		var lock_text := ""
@@ -350,14 +402,7 @@ func _refresh_plugins() -> void:
 			lock_text = "\n未解锁：需要总吞噬 %.0f%%" % plugin.unlock_devour
 		elif not owned and button.disabled:
 			lock_text = "\n还差：%s" % _missing_cost_text(costs)
-		button.text = "%s%s%s\n%s\n成本：%.0f 螺旋序列%s" % [
-			"已装配：" if equipped else "",
-			plugin.display_name,
-			"（已拥有）" if owned else "",
-			plugin.description,
-			plugin.cost_helix,
-			lock_text
-		]
+		button.text = _plugin_button_text(plugin, owned, equipped, lock_text)
 
 func _refresh_prestige() -> void:
 	var preview: Dictionary = SimulationService.prestige_preview()
@@ -382,6 +427,40 @@ func _cycle_deployment(unit_id: String) -> void:
 func _save_now() -> void:
 	_ensure_command_service()
 	_command_service.save_now()
+
+func _first_version_session_text(snapshot: Dictionary) -> String:
+	var active = ConfigDB.get_region(GameState.active_region)
+	var active_name: String = active.display_name if active != null else GameState.active_region
+	var projection_unit: String = String(snapshot.get("projection_unit_name", "主力"))
+	var prepared: int = int(snapshot.get("prepared_reserve", 0))
+	var needed: int = int(snapshot.get("needed_reserve", 0))
+	var pressure: float = maxf(float(snapshot.get("effective_pressure", snapshot.get("pressure", 0.0))), float(snapshot.get("pressure", 0.0)))
+	return "正式入口：开始 / 继续 / 重开。首局目标链：贫民区边缘 -> 废弃工厂 -> 研究堡垒外环。\n当前：%s %.1f%%，敌压 %.1f，%s %d/%d；下一步按下方目标提示执行。" % [
+		active_name,
+		float(GameState.region_progress.get(GameState.active_region, 0.0)),
+		pressure,
+		projection_unit,
+		prepared,
+		needed
+	]
+
+func _first_version_result_text(snapshot: Dictionary) -> String:
+	var mode: String = String(snapshot.get("mode", "idle"))
+	var report_mode: String = String(GameState.battle_report.get("mode", "idle"))
+	var next_name: String = String(snapshot.get("next_region_name", ""))
+	if mode == "complete":
+		if next_name != "":
+			return "阶段结果：当前防线已吞噬，点击战场切换%s；这不是固定成功，进度来自规则结算。" % next_name
+		return "阶段结果：当前防线已吞噬；查看吞噬世界结算或继续下一目标。"
+	if mode == "understrength" or report_mode == "understrength" or _is_shortage_feedback(GameState.feedback):
+		return "失败反馈：强攻规模不足，左蓄兵或改构筑后再推进；也可撤离保全场上单位。"
+	if mode == "stalled" or report_mode == "stalled":
+		return "失败反馈：敌压压过我方战力，补储备、换构筑或撤离保全，规则不会固定成功。"
+	if mode == "retreat" or report_mode == "retreat":
+		return "撤退反馈：场上单位已按规则回收，损耗与保全会改变下一次强攻风险。"
+	if bool(snapshot.get("prestige_ready", false)):
+		return "结算反馈：吞噬世界已有突变原收益，可在底部确认重置；重开后倍率提升。"
+	return "战术选择：酸液囊仓=高推进/高损耗；硬化背甲=稳推进/低损耗；强攻与撤离都走服务层规则。"
 
 func _battle_text() -> String:
 	var active = ConfigDB.get_region(GameState.active_region)
@@ -470,6 +549,10 @@ func _battlefield_snapshot() -> Dictionary:
 		"hydralisk_intensity": int(GameState.deployment_intensity.get("hydralisk", 0)),
 		"unit_readout_text": _unit_readout_text(),
 		"plugin_name": _equipped_plugin_name(),
+		"status_text": String(projection.get("status_text", report.get("status_text", ""))),
+		"reaction_text": String(projection.get("reaction_text", report.get("reaction_text", ""))),
+		"build_plugin_name": String(projection.get("build_plugin_name", report.get("build_plugin_name", ""))),
+		"reaction_bonus": float(projection.get("reaction_bonus", report.get("reaction_bonus", 0.0))),
 		"returned": returned,
 		"loss_reason": String(report.get("loss_reason", "")),
 		"front_motion": String(report.get("front_motion", "none")),
@@ -595,6 +678,9 @@ func _preferred_assault_unit() -> String:
 			return "hydralisk"
 	if GameState.active_region == "research_bastion":
 		for unit_id in ["baneling", "carapace_guard"]:
+			if _unit_build_plugin_id(unit_id) != "" and _unit_actionable(unit_id):
+				return unit_id
+		for unit_id in ["baneling", "carapace_guard"]:
 			if _projection_ready(unit_id) or _unit_actionable(unit_id):
 				return unit_id
 		return "baneling"
@@ -618,7 +704,7 @@ func _preferred_prepare_unit() -> String:
 func _factory_hydralisk_plan_active() -> bool:
 	if GameState.active_region != "factory_wall":
 		return false
-	return bool(GameState.region_entry_staged.get("factory_wall", false)) or GameState.equipped_plugin == "piercing_spines" or bool(GameState.plugins_owned.get("piercing_spines", false))
+	return bool(GameState.region_entry_staged.get("factory_wall", false)) or _unit_build_plugin_id("hydralisk") == "piercing_spines" or bool(GameState.plugins_owned.get("piercing_spines", false))
 
 func _unit_actionable(unit_id: String) -> bool:
 	var unit = ConfigDB.get_unit(unit_id)
@@ -648,10 +734,111 @@ func _command_unit(unit_id: String) -> void:
 	_command_service.set_deployment(unit_id, next)
 
 func _equipped_plugin_name() -> String:
+	var parts: Array[String] = []
+	for unit_id in _unit_ids():
+		var summary: Dictionary = SimulationService.build_summary_for_unit(unit_id, GameState.active_region)
+		var plugin_name: String = String(summary.get("plugin_name", ""))
+		if plugin_name != "":
+			var unit = ConfigDB.get_unit(unit_id)
+			parts.append("%s:%s" % [unit.display_name if unit != null else unit_id, plugin_name])
+	if not parts.is_empty():
+		return " / ".join(parts)
 	if GameState.equipped_plugin == "":
 		return ""
 	var plugin = ConfigDB.get_plugin(GameState.equipped_plugin)
 	return plugin.display_name if plugin != null else GameState.equipped_plugin
+
+func _plugin_equipped(plugin_id: String) -> bool:
+	var plugin = ConfigDB.get_plugin(plugin_id)
+	if plugin == null:
+		return false
+	return _unit_build_plugin_id(String(plugin.target_unit)) == plugin_id or GameState.equipped_plugin == plugin_id
+
+func _unit_build_plugin_id(unit_id: String) -> String:
+	if unit_id == "":
+		return ""
+	var build = GameState.unit_builds.get(unit_id, {})
+	if typeof(build) == TYPE_DICTIONARY:
+		return String(build.get("primary", ""))
+	return ""
+
+func _plugin_button_text(plugin, owned: bool, equipped: bool, lock_text: String) -> String:
+	var title: String = "%s%s%s" % [
+		"已装配：" if equipped else "",
+		plugin.display_name,
+		"（已拥有）" if owned else ""
+	]
+	var hook: Dictionary = _plugin_hook_parts(plugin)
+	var status_line := "状态：%s" % _compact_join(hook.get("status_labels", []), " / ", "无")
+	var reaction_line := "反应：%s" % _compact_join(hook.get("reaction_labels", []), " / ", "无")
+	return "%s\n%s -> %s槽\n%s\n%s\n%s\n成本 %.0f 螺旋%s" % [
+		title,
+		plugin.display_name,
+		String(hook.get("target_name", "")),
+		status_line,
+		reaction_line,
+		_short_plugin_purpose(plugin),
+		plugin.cost_helix,
+		lock_text
+	]
+
+func _plugin_hook_text(plugin) -> String:
+	var hook: Dictionary = _plugin_hook_parts(plugin)
+	var effect_parts: Array[String] = []
+	for label in hook.get("status_labels", []):
+		effect_parts.append(String(label))
+	for label in hook.get("reaction_labels", []):
+		effect_parts.append(String(label))
+	return "%s -> %s槽 / %s" % [
+		plugin.display_name if plugin != null else "构筑",
+		String(hook.get("target_name", "未配置")),
+		" / ".join(effect_parts)
+	]
+
+func _plugin_hook_parts(plugin) -> Dictionary:
+	if plugin == null:
+		return {"target_name": "未配置", "status_labels": [], "reaction_labels": []}
+	var unit = ConfigDB.get_unit(plugin.target_unit)
+	var target_name: String = unit.display_name if unit != null else String(plugin.target_unit)
+	var status_labels: Array[String] = []
+	for status_id in plugin.status_ids:
+		var status = ConfigDB.get_status(String(status_id))
+		if status != null:
+			status_labels.append(String(status.ui_label) if String(status.ui_label) != "" else String(status.display_name))
+	var reaction_labels: Array[String] = []
+	var element_tag: String = String(plugin.element_tag) if String(plugin.element_tag) != "" else String(plugin.counter_tag)
+	for reaction_id in ConfigDB.get_reaction_ids():
+		var reaction = ConfigDB.get_reaction(reaction_id)
+		if reaction != null and String(reaction.element_tag) == element_tag:
+			reaction_labels.append(String(reaction.display_name))
+	return {
+		"target_name": target_name,
+		"status_labels": status_labels,
+		"reaction_labels": reaction_labels
+	}
+
+func _short_plugin_purpose(plugin) -> String:
+	if plugin == null:
+		return ""
+	match String(plugin.id):
+		"acid_reservoir":
+			return "高推进，拆火焰炮塔"
+		"hardened_carapace":
+			return "低损耗，抗轨道哨戒"
+		"piercing_spines", "serrated_spines":
+			return "穿刺破盾"
+		"regenerative_slime", "acid_carapace":
+			return "保全撤离"
+		_:
+			return "规则：输出/保全改变"
+
+func _compact_join(values: Array, separator: String, fallback: String) -> String:
+	var parts: Array[String] = []
+	for value in values:
+		var text := String(value).strip_edges()
+		if text != "":
+			parts.append(text)
+	return separator.join(parts) if not parts.is_empty() else fallback
 
 func _add_battle_visuals(parent: VBoxContainer) -> void:
 	_battle_progress = ProgressBar.new()
@@ -704,6 +891,9 @@ func _refresh_battle_visuals(snapshot: Dictionary) -> void:
 		flow_parts.append("补位 +%d" % reinforced)
 	if lost > 0:
 		flow_parts.append("损耗 -%d" % lost)
+	var reaction_text: String = String(snapshot.get("reaction_text", ""))
+	if reaction_text != "":
+		flow_parts.append(reaction_text)
 	_battle_flow_label.text = "战况：%s" % "  ".join(flow_parts)
 
 	var lit_markers: int = clampi(field_total, 0, _battle_unit_markers.size())
@@ -812,7 +1002,7 @@ func _next_step_text() -> String:
 		var shortfall: int = int(projection.get("reserve_shortfall", 0))
 		var hatch_fill: int = int(projection.get("hatch_fill_count", 0))
 		var unit_name: String = unit.display_name if unit != null else unit_id
-		var plugin_text: String = "穿刺脊突已装配；" if GameState.equipped_plugin == "piercing_spines" else ""
+		var plugin_text: String = "穿刺脊突已装配；" if _unit_build_plugin_id("hydralisk") == "piercing_spines" else ""
 		if needed > 0 and shortfall <= 0 and prepared >= needed:
 			return "下一步：%s%s %d/%d，点战场中线强攻推进工厂。" % [plugin_text, unit_name, prepared, needed]
 		if hatch_fill > 0:
@@ -847,7 +1037,7 @@ func _next_step_text() -> String:
 	if active_progress < 8.0:
 		return "下一步：看状态色条；若停滞，补储备或升级器官。"
 
-	if GameState.active_region == "factory_wall" and GameState.equipped_plugin != "piercing_spines":
+	if GameState.active_region == "factory_wall" and _unit_build_plugin_id("hydralisk") != "piercing_spines":
 		var plugin = ConfigDB.get_plugin("piercing_spines")
 		if plugin != null and (bool(GameState.plugins_owned.get("piercing_spines", false)) or GameState.can_spend({"helix": plugin.cost_helix})):
 			return "下一步：装配穿刺脊突，提高工厂防线推进。"
@@ -904,7 +1094,19 @@ func _unit_readout_text() -> String:
 		field_parts.append("无")
 	if reserve_parts.is_empty():
 		reserve_parts.append("无")
-	return "场上 %s    储备 %s" % [" / ".join(field_parts), " / ".join(reserve_parts)]
+	var build_parts: Array[String] = []
+	for unit_id in _unit_ids():
+		var summary: Dictionary = SimulationService.build_summary_for_unit(unit_id, GameState.active_region)
+		var plugin_name: String = String(summary.get("plugin_name", ""))
+		if plugin_name == "":
+			continue
+		var unit = ConfigDB.get_unit(unit_id)
+		var hook_text: String = String(summary.get("reaction_text", ""))
+		if hook_text == "":
+			hook_text = String(summary.get("status_text", ""))
+		build_parts.append("%s:%s%s" % [unit.display_name if unit != null else unit_id, plugin_name, " " + hook_text if hook_text != "" else ""])
+	var build_text: String = "    构筑 %s" % " / ".join(build_parts) if not build_parts.is_empty() else ""
+	return "场上 %s    储备 %s%s" % [" / ".join(field_parts), " / ".join(reserve_parts), build_text]
 
 func _offline_text() -> String:
 	if GameState.offline_report.is_empty():
@@ -938,10 +1140,11 @@ func _make_label(text: String) -> Label:
 func _make_button(text: String) -> Button:
 	var button := Button.new()
 	button.text = text
-	button.custom_minimum_size = Vector2(44, 52)
+	button.custom_minimum_size = Vector2(0, 52)
 	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	button.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
-	button.clip_text = true
+	button.clip_text = false
+	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	return button
 
 func _unit_role_tag(unit_id: String) -> String:

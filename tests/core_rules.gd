@@ -75,7 +75,9 @@ func _run() -> void:
 	_test_stage1_old_save_defaults_new_content()
 	_test_stage1_public_ui_visible_content_and_rule_effects()
 	_test_stage2_battle_presentation_pool_and_rule_authority()
+	_test_stage3_status_element_build_hooks_and_old_save_migration()
 	_test_plugin_ab_comparison()
+	_test_first_version_formal_entry_loop()
 	_test_offline_cap()
 	_test_save_integrity()
 	_test_prestige_preview_and_reset_state()
@@ -699,6 +701,85 @@ func _test_mobile_readability_and_completed_factory_guidance() -> void:
 		_assert(baneling_button.autowrap_mode == TextServer.AUTOWRAP_ARBITRARY, "unit hatch buttons should wrap instead of widening the 540px layout")
 	main.free()
 
+func _test_first_version_formal_entry_loop() -> void:
+	GameState.reset_new_game(false)
+	GameState.ensure_config_defaults()
+	var main = MainScript.new()
+	main.ConfigDB = ConfigDB
+	main.GameState = GameState
+	main.SaveService = SaveService
+	main.SimulationService = SimulationService
+	main.size = Vector2(540, 960)
+	root.add_child(main)
+	main.call("_refresh")
+
+	var start_button: Button = main.get("_start_button")
+	var continue_button: Button = main.get("_continue_button")
+	var restart_button: Button = main.get("_restart_button")
+	var session_label: Label = main.get("_session_label")
+	var session_result_label: Label = main.get("_session_result_label")
+	_assert(start_button != null and continue_button != null and restart_button != null, "first version formal entry should expose start/continue/restart controls")
+	_assert(session_label != null and session_label.text.find("首局目标链") >= 0, "formal entry should explain the first-session objective chain")
+	_assert(session_result_label != null and session_result_label.text.find("战术选择") >= 0, "formal entry should expose two risk/reward tactical choices")
+	start_button.pressed.emit()
+	_assert(String(GameState.feedback).find("首局开始") >= 0, "start button should begin a first session through the command service")
+	_assert(GameState.active_region == "slum_edge", "start button should reset to the first public region")
+	GameState.resources["pulp"] = 1.0
+	continue_button.pressed.emit()
+	_assert(String(GameState.feedback).find("已读取存档") >= 0 or String(GameState.feedback).find("没有可继续") >= 0, "continue button should surface load/settlement feedback")
+	GameState.resources["pulp"] = 999.0
+	restart_button.pressed.emit()
+	_assert(String(GameState.feedback).find("首局已重开") >= 0, "restart button should surface clear restart feedback")
+	_assert(float(GameState.resources.get("pulp", 0.0)) == 36.0, "restart should use the normal new-game resource path")
+
+	GameState.resources = {"pulp": 999.0, "enzyme": 999.0, "helix": 999.0, "larva": 99.0, "mutation": 0.0}
+	GameState.total_devour = 200.0
+	GameState.region_unlocked["research_bastion"] = true
+	GameState.active_region = "research_bastion"
+	GameState.ensure_config_defaults()
+	main.call("_refresh")
+	var plugin_buttons: Dictionary = main.get("_plugin_buttons")
+	var acid_button: Button = plugin_buttons.get("acid_reservoir", null)
+	var shell_button: Button = plugin_buttons.get("hardened_carapace", null)
+	_assert(acid_button != null and shell_button != null, "formal UI should expose acid and shell build choices")
+	acid_button.pressed.emit()
+	_assert(String(GameState.unit_builds.get("baneling", {}).get("primary", "")) == "acid_reservoir", "acid reservoir should equip into the baneling build slot through public UI")
+	var acid_projection: Dictionary = SimulationService.battle_projection("baneling")
+	_assert(float(acid_projection.get("plugin_bonus", 0.0)) > 0.0, "acid build should change combat output through rule hooks")
+	_assert(SimulationService.prepare_wave("baneling"), "first-version loop should prepare banelings through real hatch costs")
+	_assert(SimulationService.assault_push("baneling"), "first-version loop should commit banelings through assault rules")
+	SimulationService.simulate_seconds(3.0, true)
+	_assert(float(GameState.region_progress.get("research_bastion", 0.0)) > 0.0, "first-version loop should advance a public region through real power")
+	_assert(float(GameState.battle_report.get("power", 0.0)) > float(GameState.battle_report.get("pressure", 0.0)), "first-version advancement must come from power exceeding pressure")
+	main.call("_on_battlefield_command", "retreat")
+	_assert(String(GameState.feedback).find("撤离") >= 0, "first-version loop should expose retreat feedback")
+
+	GameState.reset_new_game(false)
+	GameState.ensure_config_defaults()
+	GameState.resources = {"pulp": 999.0, "enzyme": 999.0, "helix": 999.0, "larva": 99.0, "mutation": 0.0}
+	GameState.total_devour = 200.0
+	GameState.region_unlocked["research_bastion"] = true
+	GameState.active_region = "research_bastion"
+	GameState.ensure_config_defaults()
+	_assert(SimulationService.buy_or_equip_plugin("hardened_carapace"), "shell build should equip through service rules")
+	var shell_projection: Dictionary = SimulationService.battle_projection("carapace_guard")
+	_assert(float(shell_projection.get("loss_rate", 1.0)) < float(acid_projection.get("loss_rate", 0.0)), "shell build should present lower-loss tradeoff than acid baneling")
+
+	GameState.reset_new_game(false)
+	GameState.ensure_config_defaults()
+	GameState.resources = {"pulp": 0.0, "enzyme": 0.0, "helix": 0.0, "larva": 0.0, "mutation": 0.0}
+	GameState.total_devour = 200.0
+	GameState.region_unlocked["research_bastion"] = true
+	GameState.active_region = "research_bastion"
+	GameState.ensure_config_defaults()
+	main.call("_on_battlefield_command", "assault")
+	SimulationService.simulate_seconds(1.0, true)
+	var failure_snapshot: Dictionary = main.call("_battlefield_snapshot")
+	var failure_result: String = String(main.call("_first_version_result_text", failure_snapshot))
+	_assert(String(GameState.battle_report.get("mode", "")) == "understrength", "failed first-version assault should keep understrength readable after the next idle tick")
+	_assert(failure_result.find("失败反馈") >= 0, "formal entry should surface clear failure feedback")
+	main.free()
+
 func _find_scroll_container(node: Node) -> ScrollContainer:
 	if node is ScrollContainer:
 		return node
@@ -923,6 +1004,83 @@ func _test_stage2_battle_presentation_pool_and_rule_authority() -> void:
 	for forbidden in ["GameState.resources", "GameState.reserves", "GameState.field_units", "GameState.region_progress", "GameState.total_devour", "GameState.spend", "GameState.add_resource"]:
 		_assert(director_source.find(forbidden) < 0, "stage2 BattleDirector must not own macro state mutation: %s" % forbidden)
 		_assert(view_source.find(forbidden) < 0, "stage2 BattlefieldView must not mutate macro state directly: %s" % forbidden)
+
+func _test_stage3_status_element_build_hooks_and_old_save_migration() -> void:
+	ConfigDB.load_all()
+	_assert(ConfigDB.get_status_ids().size() >= 4, "stage3 should index at least four status configs")
+	_assert(ConfigDB.get_reaction_ids().size() >= 2, "stage3 should index at least two element reaction configs")
+	_assert(ConfigDB.get_status("corroded") != null and ConfigDB.get_status("hardened") != null, "stage3 core statuses should be loadable")
+	_assert(ConfigDB.get_reaction("acid_ignition") != null and ConfigDB.get_reaction("shell_deflection") != null, "stage3 core reactions should be loadable")
+
+	var old_save := {
+		"version": 1,
+		"resources": {"pulp": 800.0, "enzyme": 300.0, "helix": 80.0, "larva": 80.0, "mutation": 0.0},
+		"organ_levels": {"mucus_fronds": 2},
+		"reserves": {"baneling": 4},
+		"field_units": {},
+		"deployment_intensity": {},
+		"plugins_owned": {"acid_reservoir": true},
+		"equipped_plugin": "acid_reservoir",
+		"region_progress": {"slum_edge": 100.0, "factory_wall": 100.0},
+		"region_unlocked": {"slum_edge": true, "factory_wall": true, "research_bastion": true},
+		"active_region": "research_bastion",
+		"total_devour": 200.0,
+		"last_save_unix": Time.get_unix_time_from_system()
+	}
+	GameState.from_dict(old_save)
+	_assert(GameState.unit_builds.has("baneling"), "old saves missing unit_builds should gain a baneling build slot")
+	_assert(String(GameState.unit_builds["baneling"].get("primary", "")) == "acid_reservoir", "old equipped plugin should migrate into the target unit build slot")
+	var migrated_projection: Dictionary = SimulationService.battle_projection("baneling")
+	_assert(String(migrated_projection.get("status_text", "")).find("腐蚀") >= 0, "migrated build should expose its status in projection")
+	_assert(String(migrated_projection.get("reaction_text", "")).find("酸蚀爆燃") >= 0, "migrated build should expose its element reaction in projection")
+
+	var baseline: Dictionary = _simulate_research_baneling_build("")
+	var acid_build: Dictionary = _simulate_research_baneling_build("acid_reservoir")
+	_assert(float(acid_build.get("progress_gain", 0.0)) > float(baseline.get("progress_gain", 0.0)), "same-input baneling fight should advance further after switching to acid_reservoir build")
+	_assert(float(acid_build.get("power", 0.0)) > float(baseline.get("power", 0.0)), "build output delta should come from rule-computed power, not fixed success")
+	_assert(String(acid_build.get("reaction_text", "")).find("酸蚀爆燃") >= 0, "acid build fight should report the acid element reaction")
+	_assert(String(acid_build.get("status_text", "")).find("腐蚀") >= 0, "acid build fight should report the corroded status")
+
+	GameState.reset_new_game(false)
+	GameState.ensure_config_defaults()
+	GameState.resources = {"pulp": 1200.0, "enzyme": 600.0, "helix": 600.0, "larva": 120.0, "mutation": 0.0}
+	GameState.total_devour = 220.0
+	GameState.region_unlocked["research_bastion"] = true
+	GameState.active_region = "research_bastion"
+	GameState.ensure_config_defaults()
+	_assert(SimulationService.buy_or_equip_plugin("hardened_carapace"), "shell build should equip through public service path")
+	var shell_projection: Dictionary = SimulationService.battle_projection("carapace_guard")
+	_assert(String(GameState.unit_builds["carapace_guard"].get("primary", "")) == "hardened_carapace", "shell plugin should occupy the carapace guard build slot")
+	_assert(String(shell_projection.get("reaction_text", "")).find("甲壳偏折") >= 0, "shell build should expose the second element reaction")
+	_assert(float(shell_projection.get("loss_rate", 1.0)) < float(shell_projection.get("baseline_loss_rate", 0.0)), "shell reaction/status should lower projected losses through rule hooks")
+
+	var main = MainScript.new()
+	main.ConfigDB = ConfigDB
+	main.GameState = GameState
+	main.SaveService = SaveService
+	main.SimulationService = SimulationService
+	root.add_child(main)
+	main.call("_refresh")
+	var snapshot: Dictionary = main.call("_battlefield_snapshot")
+	_assert(String(snapshot.get("status_text", "")).find("硬化") >= 0, "formal UI snapshot should expose build status text")
+	_assert(String(snapshot.get("reaction_text", "")).find("甲壳偏折") >= 0, "formal UI snapshot should expose reaction text")
+	main.free()
+
+func _simulate_research_baneling_build(plugin_id: String) -> Dictionary:
+	GameState.reset_new_game(false)
+	GameState.ensure_config_defaults()
+	GameState.resources = {"pulp": 1200.0, "enzyme": 600.0, "helix": 600.0, "larva": 120.0, "mutation": 0.0}
+	GameState.total_devour = 220.0
+	GameState.region_unlocked["research_bastion"] = true
+	GameState.active_region = "research_bastion"
+	GameState.ensure_config_defaults()
+	if plugin_id != "":
+		_assert(SimulationService.buy_or_equip_plugin(plugin_id), "stage3 build switch plugin should equip: %s" % plugin_id)
+		GameState.resources = {"pulp": 1200.0, "enzyme": 600.0, "helix": 600.0, "larva": 120.0, "mutation": 0.0}
+	_assert(SimulationService.hatch_unit("baneling", 4), "stage3 same-input setup should hatch banelings")
+	SimulationService.set_deployment("baneling", 3)
+	SimulationService.simulate_seconds(2.0, true)
+	return GameState.battle_report.duplicate(true)
 
 func _simulate_factory_push(plugin_id: String) -> float:
 	GameState.reset_new_game(false)

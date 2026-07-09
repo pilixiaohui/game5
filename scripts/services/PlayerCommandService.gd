@@ -46,11 +46,29 @@ func save_now() -> bool:
 	GameState.set_feedback(SaveService.last_error)
 	return false
 
-func load_and_settle() -> void:
-	SaveService.load_game()
+func load_and_settle() -> bool:
+	var loaded: bool = SaveService.load_game()
+	if not loaded:
+		GameState.set_feedback("没有可继续的存档：当前保留新蜂巢；也可点开始首局。")
+		return false
 	SimulationService.settle_offline_from_save()
 	GameState.set_feedback("已读取存档并结算离线收益。")
+	return true
 
-func new_game_and_save() -> void:
+func start_first_session() -> bool:
 	GameState.reset_new_game(false)
-	SaveService.save_game()
+	var saved: bool = SaveService.save_game()
+	if saved:
+		GameState.set_feedback("首局开始：按目标链孵化、构筑、强攻或撤离，推进真实防线。")
+		return true
+	GameState.set_feedback(SaveService.last_error)
+	return false
+
+func new_game_and_save() -> bool:
+	GameState.reset_new_game(false)
+	var saved: bool = SaveService.save_game()
+	if saved:
+		GameState.set_feedback("首局已重开：资源、储备、战场和构筑已回到新蜂巢。")
+		return true
+	GameState.set_feedback(SaveService.last_error)
+	return false

@@ -6,7 +6,7 @@ signal offline_report_ready(report: Dictionary)
 
 var ConfigDB
 
-const SAVE_VERSION := 1
+const SAVE_VERSION := 2
 const RESOURCE_IDS: Array[String] = ["pulp", "enzyme", "helix", "larva", "mutation"]
 
 var resources: Dictionary = {}
@@ -16,6 +16,7 @@ var field_units: Dictionary = {}
 var deployment_intensity: Dictionary = {}
 var plugins_owned: Dictionary = {}
 var equipped_plugin: String = ""
+var unit_builds: Dictionary = {}
 var region_progress: Dictionary = {}
 var region_unlocked: Dictionary = {}
 var region_entry_staged: Dictionary = {}
@@ -54,6 +55,7 @@ func reset_new_game(keep_mutation: bool = true) -> void:
 	deployment_intensity = {}
 	plugins_owned = {}
 	equipped_plugin = ""
+	unit_builds = {}
 	region_progress = {}
 	region_unlocked = {"slum_edge": true}
 	region_entry_staged = {}
@@ -84,6 +86,10 @@ func ensure_config_defaults() -> void:
 			field_units[unit_id] = 0
 		if not deployment_intensity.has(unit_id):
 			deployment_intensity[unit_id] = 0
+		if not unit_builds.has(unit_id) or typeof(unit_builds.get(unit_id)) != TYPE_DICTIONARY:
+			unit_builds[unit_id] = {"primary": ""}
+		elif not Dictionary(unit_builds[unit_id]).has("primary"):
+			unit_builds[unit_id]["primary"] = ""
 	for region_id in ConfigDB.regions.keys():
 		if not region_progress.has(region_id):
 			region_progress[region_id] = 0.0
@@ -94,6 +100,7 @@ func ensure_config_defaults() -> void:
 			region_entry_staged[region_id] = false
 	if not region_unlocked.has(active_region) or not region_unlocked[active_region]:
 		active_region = "slum_edge"
+	_migrate_equipped_plugin_to_unit_build()
 
 func set_feedback(message: String) -> void:
 	feedback = message
@@ -130,6 +137,7 @@ func to_dict() -> Dictionary:
 		"deployment_intensity": deployment_intensity,
 		"plugins_owned": plugins_owned,
 		"equipped_plugin": equipped_plugin,
+		"unit_builds": unit_builds,
 		"region_progress": region_progress,
 		"region_unlocked": region_unlocked,
 		"region_entry_staged": region_entry_staged,
@@ -150,6 +158,7 @@ func from_dict(data: Dictionary) -> void:
 	deployment_intensity = data.get("deployment_intensity", {})
 	plugins_owned = data.get("plugins_owned", {})
 	equipped_plugin = String(data.get("equipped_plugin", ""))
+	unit_builds = data.get("unit_builds", {})
 	region_progress = data.get("region_progress", {})
 	region_unlocked = data.get("region_unlocked", {"slum_edge": true})
 	region_entry_staged = data.get("region_entry_staged", {})
@@ -183,6 +192,13 @@ func _empty_battle_report() -> Dictionary:
 			"needed_reserve": 0,
 			"action": "",
 			"cause": "",
+			"build_plugin_id": "",
+			"build_plugin_name": "",
+			"status_ids": [],
+			"status_text": "",
+			"reaction_ids": [],
+			"reaction_text": "",
+			"reaction_bonus": 0.0,
 			"base_pressure": 0.0,
 			"effective_pressure": 0.0,
 			"support_bonus": 0.0,
@@ -206,3 +222,16 @@ func _empty_battle_report() -> Dictionary:
 			"prestige_gain": 0,
 			"prestige_ready": false
 		}
+
+func _migrate_equipped_plugin_to_unit_build() -> void:
+	if equipped_plugin == "" or ConfigDB == null:
+		return
+	var plugin = ConfigDB.get_plugin(equipped_plugin)
+	if plugin == null or String(plugin.target_unit) == "":
+		return
+	var unit_id: String = String(plugin.target_unit)
+	if not unit_builds.has(unit_id) or typeof(unit_builds.get(unit_id)) != TYPE_DICTIONARY:
+		unit_builds[unit_id] = {"primary": ""}
+	var slot: String = String(plugin.build_slot) if String(plugin.build_slot) != "" else "primary"
+	if String(unit_builds[unit_id].get(slot, "")) == "":
+		unit_builds[unit_id][slot] = equipped_plugin

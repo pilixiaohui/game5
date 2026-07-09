@@ -13,4 +13,6 @@ cost_helix = 6.0
 damage_bonus = 0.06
 survival_bonus = 0.04
 counter_tag = "physical"
+element_tag = "bio"
+status_ids = Array[String](["regenerating"])
 unlock_devour = 20.0

@@ -13,10 +13,11 @@ func _ready() -> void:
 func _add_command_button(text: String, action: String) -> void:
 	var button := Button.new()
 	button.text = text
-	button.custom_minimum_size = Vector2(44, 52)
+	button.custom_minimum_size = Vector2(0, 50)
 	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	button.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
-	button.clip_text = true
+	button.clip_text = false
+	button.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	button.pressed.connect(func() -> void:
 		command_requested.emit(action)
 	)

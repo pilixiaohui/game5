@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="StatusConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/StatusConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "punctured"
+display_name = "穿孔"
+description = "穿刺构筑撕开护盾与厚甲，直接提高破点输出。"
+sort_order = 20
+element_tag = "pierce"
+ui_label = "穿孔破盾"
+power_bonus = 0.05
+pressure_relief_bonus = 0.0
+loss_reduction_bonus = 0.0
