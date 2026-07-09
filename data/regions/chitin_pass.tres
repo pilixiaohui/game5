@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="RegionConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/RegionConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "chitin_pass"
+display_name = "甲壳通道"
+description = "窄通道里盾卫和轨道哨戒交替压制；蟑螂与甲壳卫士能稳住推进。"
+sort_order = 40
+length = 170.0
+enemy_ids = Array[String](["shield_guard", "rail_sentry"])
+enemy_pressure = 58.0
+reward_pulp_per_progress = 10.5
+reward_enzyme_per_progress = 1.8
+unlock_at_devour = 230.0
+next_region = "orbital_relay"

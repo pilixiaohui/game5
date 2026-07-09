@@ -7,6 +7,7 @@ script = ExtResource("1")
 id = "slum_edge"
 display_name = "贫民区边缘"
 description = "第一片人类防线，步枪兵密集但装甲薄，适合跳虫打开局面。"
+sort_order = 10
 length = 100.0
 enemy_ids = Array[String](["rifleman"])
 enemy_pressure = 14.0

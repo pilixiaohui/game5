@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="RegionConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/RegionConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "orbital_relay"
+display_name = "轨道中继站"
+description = "火焰炮塔保护轨道哨戒阵列；飞螳切后排，爆裂虫拆炮塔。"
+sort_order = 50
+length = 190.0
+enemy_ids = Array[String](["flame_turret", "rail_sentry"])
+enemy_pressure = 68.0
+reward_pulp_per_progress = 12.0
+reward_enzyme_per_progress = 2.2
+unlock_at_devour = 300.0
+next_region = ""

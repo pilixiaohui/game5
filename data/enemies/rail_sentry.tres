@@ -6,6 +6,7 @@
 script = ExtResource("1")
 id = "rail_sentry"
 display_name = "轨道哨戒"
+sort_order = 40
 pressure = 22.0
 armor = 1.8
 weakness_tag = "shell"

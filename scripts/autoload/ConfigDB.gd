@@ -6,52 +6,29 @@ var enemies: Dictionary = {}
 var plugins: Dictionary = {}
 var regions: Dictionary = {}
 
-const ORGAN_PATHS: Array[String] = [
-	"res://data/organs/mucus_fronds.tres",
-	"res://data/organs/deep_roots.tres",
-	"res://data/organs/acid_fountain.tres",
-	"res://data/organs/ferment_sac.tres",
-	"res://data/organs/reflux_pump.tres",
-	"res://data/organs/neural_spire.tres"
-]
-const UNIT_PATHS: Array[String] = [
-	"res://data/units/zergling.tres",
-	"res://data/units/hydralisk.tres",
-	"res://data/units/baneling.tres",
-	"res://data/units/carapace_guard.tres"
-]
-const ENEMY_PATHS: Array[String] = [
-	"res://data/enemies/rifleman.tres",
-	"res://data/enemies/shield_guard.tres",
-	"res://data/enemies/flame_turret.tres",
-	"res://data/enemies/rail_sentry.tres"
-]
-const PLUGIN_PATHS: Array[String] = [
-	"res://data/plugins/piercing_spines.tres",
-	"res://data/plugins/acid_carapace.tres"
-]
-const REGION_PATHS: Array[String] = [
-	"res://data/regions/slum_edge.tres",
-	"res://data/regions/factory_wall.tres",
-	"res://data/regions/research_bastion.tres"
-]
+const ORGAN_DIR := "res://data/organs"
+const UNIT_DIR := "res://data/units"
+const ENEMY_DIR := "res://data/enemies"
+const PLUGIN_DIR := "res://data/plugins"
+const REGION_DIR := "res://data/regions"
 
 func _ready() -> void:
 	load_all()
 
 func load_all() -> void:
-	organs = _load_index(ORGAN_PATHS)
-	units = _load_index(UNIT_PATHS)
-	enemies = _load_index(ENEMY_PATHS)
-	plugins = _load_index(PLUGIN_PATHS)
-	regions = _load_index(REGION_PATHS)
+	organs = _load_index_from_dir(ORGAN_DIR)
+	units = _load_index_from_dir(UNIT_DIR)
+	enemies = _load_index_from_dir(ENEMY_DIR)
+	plugins = _load_index_from_dir(PLUGIN_DIR)
+	regions = _load_index_from_dir(REGION_DIR)
 
 func ensure_loaded() -> void:
 	if organs.is_empty() or units.is_empty() or regions.is_empty():
 		load_all()
 
-func _load_index(paths: Array[String]) -> Dictionary:
+func _load_index_from_dir(dir_path: String) -> Dictionary:
 	var indexed: Dictionary = {}
+	var paths := _resource_paths_in_dir(dir_path)
 	for path in paths:
 		var resource := load(path)
 		if resource == null:
@@ -62,6 +39,58 @@ func _load_index(paths: Array[String]) -> Dictionary:
 			continue
 		indexed[resource.id] = resource
 	return indexed
+
+func _resource_paths_in_dir(dir_path: String) -> Array[String]:
+	var paths: Array[String] = []
+	var dir := DirAccess.open(dir_path)
+	if dir == null:
+		push_warning("Missing config directory: %s" % dir_path)
+		return paths
+	for file_name in dir.get_files():
+		if file_name.ends_with(".tres") or file_name.ends_with(".res"):
+			paths.append("%s/%s" % [dir_path, file_name])
+	paths.sort()
+	return paths
+
+func get_organ_ids() -> Array[String]:
+	ensure_loaded()
+	return _sorted_ids(organs)
+
+func get_unit_ids() -> Array[String]:
+	ensure_loaded()
+	return _sorted_ids(units)
+
+func get_enemy_ids() -> Array[String]:
+	ensure_loaded()
+	return _sorted_ids(enemies)
+
+func get_plugin_ids() -> Array[String]:
+	ensure_loaded()
+	return _sorted_ids(plugins)
+
+func get_region_ids() -> Array[String]:
+	ensure_loaded()
+	return _sorted_ids(regions)
+
+func _sorted_ids(index: Dictionary) -> Array[String]:
+	var ids: Array[String] = []
+	for id in index.keys():
+		ids.append(String(id))
+	ids.sort_custom(func(left_id: String, right_id: String) -> bool:
+		return _sort_resource_before(index[left_id], index[right_id], left_id, right_id)
+	)
+	return ids
+
+func _sort_resource_before(left, right, left_id: String, right_id: String) -> bool:
+	var left_order := 0
+	var right_order := 0
+	if left != null:
+		left_order = int(left.get("sort_order"))
+	if right != null:
+		right_order = int(right.get("sort_order"))
+	if left_order == right_order:
+		return left_id < right_id
+	return left_order < right_order
 
 func get_organ(id: String):
 	ensure_loaded()

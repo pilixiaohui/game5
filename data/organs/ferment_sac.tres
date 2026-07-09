@@ -7,6 +7,7 @@ script = ExtResource("1")
 id = "ferment_sac"
 display_name = "发酵囊"
 description = "稳定制造幼虫营养液，缩短储备成型时间。"
+sort_order = 40
 cost_resource = "enzyme"
 base_cost = 18.0
 cost_growth = 1.15

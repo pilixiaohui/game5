@@ -4,13 +4,13 @@
 
 [resource]
 script = ExtResource("1")
-id = "piercing_spines"
-display_name = "穿刺脊突"
-description = "装配到刺蛇，显著克制盾卫，让第二片区域从停滞变为推进。"
-sort_order = 20
+id = "serrated_spines"
+display_name = "锯齿脊针"
+description = "刺蛇构筑：强化穿刺输出，对盾卫和轨道哨戒更有效。"
+sort_order = 50
 target_unit = "hydralisk"
-cost_helix = 5.0
-damage_bonus = 0.45
-survival_bonus = 0.006
+cost_helix = 9.0
+damage_bonus = 0.32
+survival_bonus = 0.004
 counter_tag = "pierce"
-unlock_devour = 0.0
+unlock_devour = 45.0

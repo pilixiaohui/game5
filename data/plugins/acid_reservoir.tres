@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="PluginConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/PluginConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "acid_reservoir"
+display_name = "酸液囊仓"
+description = "爆裂虫构筑：提高酸爆推进，专门拆火焰炮塔。"
+sort_order = 60
+target_unit = "baneling"
+cost_helix = 12.0
+damage_bonus = 0.38
+survival_bonus = 0.0
+counter_tag = "acid"
+unlock_devour = 120.0

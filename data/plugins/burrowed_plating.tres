@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="PluginConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/PluginConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "burrowed_plating"
+display_name = "潜地骨板"
+description = "蟑螂构筑：提高厚皮推进和保全，适合甲壳通道。"
+sort_order = 80
+target_unit = "roach"
+cost_helix = 16.0
+damage_bonus = 0.18
+survival_bonus = 0.03
+counter_tag = "shell"
+unlock_devour = 210.0

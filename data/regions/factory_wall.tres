@@ -7,6 +7,7 @@ script = ExtResource("1")
 id = "factory_wall"
 display_name = "废弃工厂防线"
 description = "盾卫与火力点组成停滞墙，需要刺蛇和穿刺脊突形成有效构筑。"
+sort_order = 20
 length = 120.0
 enemy_ids = Array[String](["rifleman", "shield_guard"])
 enemy_pressure = 32.0

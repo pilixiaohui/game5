@@ -6,6 +6,7 @@
 script = ExtResource("1")
 id = "rifleman"
 display_name = "步枪兵"
+sort_order = 10
 pressure = 9.0
 armor = 1.0
 weakness_tag = "physical"

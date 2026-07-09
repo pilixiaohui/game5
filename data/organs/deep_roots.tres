@@ -7,6 +7,7 @@ script = ExtResource("1")
 id = "deep_roots"
 display_name = "深钻根须"
 description = "向地下钻探回收高密度生物质，提高原浆来源。"
+sort_order = 20
 cost_resource = "pulp"
 base_cost = 52.0
 cost_growth = 1.15

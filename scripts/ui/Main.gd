@@ -1,13 +1,14 @@
 extends Control
 
 const BattlefieldViewScript := preload("res://scripts/ui/BattlefieldView.gd")
-const UNIT_ORDER: Array[String] = ["zergling", "hydralisk", "baneling", "carapace_guard"]
-const REGION_ORDER: Array[String] = ["slum_edge", "factory_wall", "research_bastion"]
+const BattleCommandPanelScript := preload("res://scripts/ui/BattleCommandPanel.gd")
+const PlayerCommandServiceScript := preload("res://scripts/services/PlayerCommandService.gd")
 
 var ConfigDB
 var GameState
 var SaveService
 var SimulationService
+var _command_service
 var _resource_label: Label
 var _guide_label: Label
 var _feedback_label: Label
@@ -51,12 +52,21 @@ func _bind_dependencies() -> void:
 		SaveService = root.get_node("SaveService")
 	if SimulationService == null and root.has_node("SimulationService"):
 		SimulationService = root.get_node("SimulationService")
+	_ensure_command_service()
+
+func _ensure_command_service() -> void:
+	if ConfigDB == null or GameState == null or SaveService == null or SimulationService == null:
+		return
+	if _command_service == null:
+		_command_service = PlayerCommandServiceScript.new()
+	_command_service.configure(ConfigDB, GameState, SaveService, SimulationService)
 
 func _process(_delta: float) -> void:
 	if Input.is_action_just_pressed("save_game"):
 		_save_now()
 	if Input.is_action_just_pressed("retreat_battle"):
-		SimulationService.retreat()
+		_ensure_command_service()
+		_command_service.retreat()
 	if Input.is_action_just_pressed("deploy_primary"):
 		_cycle_deployment("zergling")
 
@@ -109,26 +119,8 @@ func _build_ui() -> void:
 	_battle_command_label.add_theme_color_override("font_color", Color(0.62, 0.78, 0.82))
 	root.add_child(_battle_command_label)
 
-	var command_row := HBoxContainer.new()
-	command_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var prepare_wave := _make_button("蓄兵")
-	prepare_wave.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	prepare_wave.pressed.connect(func() -> void:
-		_on_battlefield_command("prepare")
-	)
-	var assault_wave := _make_button("强攻")
-	assault_wave.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	assault_wave.pressed.connect(func() -> void:
-		_on_battlefield_command("assault")
-	)
-	var retreat_wave := _make_button("撤离保全")
-	retreat_wave.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	retreat_wave.pressed.connect(func() -> void:
-		_on_battlefield_command("retreat")
-	)
-	command_row.add_child(prepare_wave)
-	command_row.add_child(assault_wave)
-	command_row.add_child(retreat_wave)
+	var command_row = BattleCommandPanelScript.new()
+	command_row.command_requested.connect(_on_battlefield_command)
 	root.add_child(command_row)
 
 	_feedback_label = _make_label("")
@@ -139,27 +131,30 @@ func _build_ui() -> void:
 	root.add_child(_offline_label)
 
 	_add_section(root, "虫巢器官")
-	for organ_id in ["mucus_fronds", "deep_roots", "acid_fountain", "ferment_sac", "reflux_pump", "neural_spire"]:
+	for organ_id in _organ_ids():
 		var button := _make_button("")
 		button.pressed.connect(func(id: String = organ_id) -> void:
-			SimulationService.purchase_organ(id)
+			_ensure_command_service()
+			_command_service.purchase_organ(id)
 		)
 		_organ_buttons[organ_id] = button
 		root.add_child(button)
 
 	_add_section(root, "孵化与储备")
-	for unit_id in UNIT_ORDER:
+	for unit_id in _unit_ids():
 		var row := HBoxContainer.new()
 		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var hatch_one := _make_button("")
 		hatch_one.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		hatch_one.pressed.connect(func(id: String = unit_id) -> void:
-			SimulationService.hatch_unit(id, 1)
+			_ensure_command_service()
+			_command_service.hatch_unit(id, 1)
 		)
 		var hatch_batch := _make_button("x5")
 		hatch_batch.custom_minimum_size = Vector2(68, 48)
 		hatch_batch.pressed.connect(func(id: String = unit_id) -> void:
-			SimulationService.hatch_unit(id, 5)
+			_ensure_command_service()
+			_command_service.hatch_unit(id, 5)
 		)
 		_unit_buttons[unit_id] = hatch_one
 		_unit_batch_buttons[unit_id] = hatch_batch
@@ -168,10 +163,11 @@ func _build_ui() -> void:
 		root.add_child(row)
 
 	_add_section(root, "区域与战斗")
-	for region_id in REGION_ORDER:
+	for region_id in _region_ids():
 		var button := _make_button("")
 		button.pressed.connect(func(id: String = region_id) -> void:
-			SimulationService.select_region(id)
+			_ensure_command_service()
+			_command_service.select_region(id)
 		)
 		_region_buttons[region_id] = button
 		root.add_child(button)
@@ -180,7 +176,7 @@ func _build_ui() -> void:
 	root.add_child(_field_label)
 	_add_battle_visuals(root)
 
-	for unit_id in UNIT_ORDER:
+	for unit_id in _unit_ids():
 		var button := _make_button("")
 		button.pressed.connect(func(id: String = unit_id) -> void:
 			_cycle_deployment(id)
@@ -189,14 +185,18 @@ func _build_ui() -> void:
 		root.add_child(button)
 
 	var retreat_button := _make_button("撤离战场：保留 75% 场上兵力并关闭投放")
-	retreat_button.pressed.connect(SimulationService.retreat)
+	retreat_button.pressed.connect(func() -> void:
+		_ensure_command_service()
+		_command_service.retreat()
+	)
 	root.add_child(retreat_button)
 
 	_add_section(root, "构筑插件")
-	for plugin_id in ["acid_carapace", "piercing_spines"]:
+	for plugin_id in _plugin_ids():
 		var button := _make_button("")
 		button.pressed.connect(func(id: String = plugin_id) -> void:
-			SimulationService.buy_or_equip_plugin(id)
+			_ensure_command_service()
+			_command_service.buy_or_equip_plugin(id)
 		)
 		_plugin_buttons[plugin_id] = button
 		root.add_child(button)
@@ -205,7 +205,10 @@ func _build_ui() -> void:
 	_prestige_label = _make_label("")
 	root.add_child(_prestige_label)
 	_prestige_button = _make_button("执行吞噬世界重置")
-	_prestige_button.pressed.connect(SimulationService.perform_prestige)
+	_prestige_button.pressed.connect(func() -> void:
+		_ensure_command_service()
+		_command_service.perform_prestige()
+	)
 	root.add_child(_prestige_button)
 
 	_add_section(root, "存档")
@@ -216,9 +219,8 @@ func _build_ui() -> void:
 	var load_button := _make_button("读取")
 	load_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	load_button.pressed.connect(func() -> void:
-		SaveService.load_game()
-		SimulationService.settle_offline_from_save()
-		GameState.set_feedback("已读取存档并结算离线收益。")
+		_ensure_command_service()
+		_command_service.load_and_settle()
 	)
 	save_row.add_child(save_button)
 	save_row.add_child(load_button)
@@ -226,8 +228,8 @@ func _build_ui() -> void:
 
 	var new_button := _make_button("新存档重开（保留 0 突变原）")
 	new_button.pressed.connect(func() -> void:
-		GameState.reset_new_game(false)
-		SaveService.save_game()
+		_ensure_command_service()
+		_command_service.new_game_and_save()
 	)
 	root.add_child(new_button)
 
@@ -374,18 +376,17 @@ func _refresh_prestige() -> void:
 func _cycle_deployment(unit_id: String) -> void:
 	var current := int(GameState.deployment_intensity.get(unit_id, 0))
 	var next: int = 0 if current >= 3 else current + 1
-	SimulationService.set_deployment(unit_id, next)
+	_ensure_command_service()
+	_command_service.set_deployment(unit_id, next)
 
 func _save_now() -> void:
-	if SaveService.save_game():
-		GameState.set_feedback("存档完成。")
-	else:
-		GameState.set_feedback(SaveService.last_error)
+	_ensure_command_service()
+	_command_service.save_now()
 
 func _battle_text() -> String:
 	var active = ConfigDB.get_region(GameState.active_region)
 	var lines: Array[String] = ["当前战场：%s" % active.display_name]
-	for unit_id in UNIT_ORDER:
+	for unit_id in _unit_ids():
 		var unit = ConfigDB.get_unit(unit_id)
 		lines.append("%s 储备 %d / 场上 %d / 投放 %d" % [
 			unit.display_name,
@@ -530,21 +531,22 @@ func _is_shortage_feedback(message: String) -> bool:
 	return message.find("规模") >= 0 or message.find("还差") >= 0 or message.find("不足") >= 0 or message.find("缺幼虫") >= 0 or message.find("缺资源") >= 0
 
 func _on_battlefield_command(action: String) -> void:
+	_ensure_command_service()
 	match action:
 		"next_region":
 			var next_region_id: String = _next_region_id(ConfigDB.get_region(GameState.active_region))
 			if next_region_id != "":
-				SimulationService.select_region(next_region_id)
+				_command_service.select_region(next_region_id)
 		"prepare":
-			SimulationService.prepare_wave(_preferred_prepare_unit())
+			_command_service.prepare_wave(_preferred_prepare_unit())
 		"assault":
-			SimulationService.assault_push(_preferred_assault_unit())
+			_command_service.assault_push(_preferred_assault_unit())
 		"zergling":
-			SimulationService.prepare_wave("zergling")
+			_command_service.prepare_wave("zergling")
 		"hydralisk":
-			SimulationService.assault_push("hydralisk")
+			_command_service.assault_push("hydralisk")
 		"retreat":
-			SimulationService.retreat()
+			_command_service.retreat()
 	if _resource_label != null:
 		_refresh()
 
@@ -578,6 +580,16 @@ func _preferred_assault_unit() -> String:
 			if _projection_ready(unit_id) or _unit_actionable(unit_id):
 				return unit_id
 		return "baneling"
+	if GameState.active_region == "chitin_pass":
+		for unit_id in ["roach", "carapace_guard", "hydralisk"]:
+			if _projection_ready(unit_id) or _unit_actionable(unit_id):
+				return unit_id
+		return "roach"
+	if GameState.active_region == "orbital_relay":
+		for unit_id in ["mutalisk", "baneling", "roach"]:
+			if _projection_ready(unit_id) or _unit_actionable(unit_id):
+				return unit_id
+		return "mutalisk"
 	return "zergling"
 
 func _preferred_prepare_unit() -> String:
@@ -606,14 +618,16 @@ func _projection_ready(unit_id: String) -> bool:
 func _command_unit(unit_id: String) -> void:
 	var reserve: int = int(GameState.reserves.get(unit_id, 0))
 	if reserve <= 0:
-		if SimulationService.hatch_unit(unit_id, 1):
-			SimulationService.set_deployment(unit_id, 1)
+		_ensure_command_service()
+		if _command_service.hatch_unit(unit_id, 1):
+			_command_service.set_deployment(unit_id, 1)
 		return
 	var current: int = int(GameState.deployment_intensity.get(unit_id, 0))
 	var next: int = clampi(current + 1, 1, 3)
 	if current >= 3:
 		next = 0
-	SimulationService.set_deployment(unit_id, next)
+	_ensure_command_service()
+	_command_service.set_deployment(unit_id, next)
 
 func _equipped_plugin_name() -> String:
 	if GameState.equipped_plugin == "":
@@ -858,7 +872,7 @@ func _region_enemy_summary(region) -> String:
 func _unit_readout_text() -> String:
 	var field_parts: Array[String] = []
 	var reserve_parts: Array[String] = []
-	for unit_id in UNIT_ORDER:
+	for unit_id in _unit_ids():
 		var unit = ConfigDB.get_unit(unit_id)
 		if unit == null:
 			continue
@@ -920,8 +934,24 @@ func _unit_role_tag(unit_id: String) -> String:
 			return "稳推进/低损耗"
 		"hydralisk":
 			return "穿刺破甲"
+		"roach":
+			return "稳守前排"
+		"mutalisk":
+			return "高机动破点"
 		_:
 			return "低耗补位"
+
+func _organ_ids() -> Array[String]:
+	return ConfigDB.get_organ_ids()
+
+func _unit_ids() -> Array[String]:
+	return ConfigDB.get_unit_ids()
+
+func _plugin_ids() -> Array[String]:
+	return ConfigDB.get_plugin_ids()
+
+func _region_ids() -> Array[String]:
+	return ConfigDB.get_region_ids()
 
 func _resource_name(id: String) -> String:
 	var names := {

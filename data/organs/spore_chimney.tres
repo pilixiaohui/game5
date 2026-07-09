@@ -4,13 +4,13 @@
 
 [resource]
 script = ExtResource("1")
-id = "acid_fountain"
-display_name = "酸蚀喷泉"
-description = "把过剩原浆裂解为活性酶，用于高级单位和构筑。"
-sort_order = 30
+id = "spore_chimney"
+display_name = "孢子烟囱"
+description = "把战场余烬转成活性酶，支撑爆裂虫和蟑螂的持续补兵。"
+sort_order = 70
 cost_resource = "pulp"
-base_cost = 95.0
-cost_growth = 1.17
+base_cost = 140.0
+cost_growth = 1.18
 production_resource = "enzyme"
-base_rate = 0.34
-rate_growth = 1.14
+base_rate = 0.48
+rate_growth = 1.13

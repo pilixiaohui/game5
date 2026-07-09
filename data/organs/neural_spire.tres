@@ -7,6 +7,7 @@ script = ExtResource("1")
 id = "neural_spire"
 display_name = "神经尖塔"
 description = "恢复蜂巢调度能力，提升幼虫供给并支撑高级投放。"
+sort_order = 60
 cost_resource = "helix"
 base_cost = 12.0
 cost_growth = 1.25

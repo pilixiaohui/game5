@@ -4,13 +4,13 @@
 
 [resource]
 script = ExtResource("1")
-id = "acid_carapace"
-display_name = "酸化甲壳"
-description = "装配到跳虫，提高保全率，适合撤离前保存兵力。"
-sort_order = 10
+id = "adrenal_hooks"
+display_name = "肾上腺钩爪"
+description = "跳虫构筑：提高物理推进，适合清理步枪兵。"
+sort_order = 30
 target_unit = "zergling"
-cost_helix = 2.0
-damage_bonus = 0.12
-survival_bonus = 0.025
+cost_helix = 4.0
+damage_bonus = 0.24
+survival_bonus = 0.004
 counter_tag = "physical"
-unlock_devour = 0.0
+unlock_devour = 12.0

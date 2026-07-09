@@ -4,6 +4,7 @@ extends Resource
 @export var id: String = ""
 @export var display_name: String = ""
 @export_multiline var description: String = ""
+@export var sort_order: int = 0
 @export var larva_cost: int = 1
 @export var pulp_cost: float = 10.0
 @export var enzyme_cost: float = 0.0

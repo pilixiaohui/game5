@@ -4,6 +4,7 @@ extends Resource
 @export var id: String = ""
 @export var display_name: String = ""
 @export_multiline var description: String = ""
+@export var sort_order: int = 0
 @export var length: float = 100.0
 @export var enemy_ids: Array[String] = []
 @export var enemy_pressure: float = 12.0

@@ -7,6 +7,7 @@ script = ExtResource("1")
 id = "zergling"
 display_name = "跳虫"
 description = "廉价前线单位，适合消耗步枪兵和填补推进强度。"
+sort_order = 10
 larva_cost = 1
 pulp_cost = 12.0
 enzyme_cost = 0.0

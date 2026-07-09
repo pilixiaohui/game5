@@ -4,13 +4,13 @@
 
 [resource]
 script = ExtResource("1")
-id = "reflux_pump"
-display_name = "回流泵"
-description = "把战场尸体和废液转化为螺旋序列。"
-sort_order = 50
+id = "helix_loom"
+display_name = "螺旋织机"
+description = "低速编织螺旋序列，给飞螳和高级构筑提供稳定来源。"
+sort_order = 80
 cost_resource = "enzyme"
-base_cost = 38.0
-cost_growth = 1.18
+base_cost = 72.0
+cost_growth = 1.22
 production_resource = "helix"
-base_rate = 0.045
-rate_growth = 1.16
+base_rate = 0.075
+rate_growth = 1.14

@@ -4,13 +4,13 @@
 
 [resource]
 script = ExtResource("1")
-id = "acid_carapace"
-display_name = "酸化甲壳"
-description = "装配到跳虫，提高保全率，适合撤离前保存兵力。"
-sort_order = 10
+id = "regenerative_slime"
+display_name = "再生黏液"
+description = "跳虫构筑：降低损耗，适合撤离前保留储备。"
+sort_order = 40
 target_unit = "zergling"
-cost_helix = 2.0
-damage_bonus = 0.12
-survival_bonus = 0.025
+cost_helix = 6.0
+damage_bonus = 0.06
+survival_bonus = 0.04
 counter_tag = "physical"
-unlock_devour = 0.0
+unlock_devour = 20.0

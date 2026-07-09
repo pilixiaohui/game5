@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="PluginConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/PluginConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "hardened_carapace"
+display_name = "硬化背甲"
+description = "甲壳卫士构筑：降低狙击损耗，适合研究堡垒持久推进。"
+sort_order = 70
+target_unit = "carapace_guard"
+cost_helix = 14.0
+damage_bonus = 0.10
+survival_bonus = 0.035
+counter_tag = "shell"
+unlock_devour = 150.0

@@ -7,6 +7,7 @@ script = ExtResource("1")
 id = "mucus_fronds"
 display_name = "菌毯绒毛"
 description = "基础代谢器官，持续吸收环境有机物并生成原浆。"
+sort_order = 10
 cost_resource = "pulp"
 base_cost = 18.0
 cost_growth = 1.12

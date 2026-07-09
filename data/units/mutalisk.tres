@@ -1,0 +1,20 @@
+[gd_resource type="Resource" script_class="UnitConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/UnitConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "mutalisk"
+display_name = "飞螳"
+description = "高机动突袭单位；适合切后排火力点，单体推进强但幼虫和螺旋消耗高。"
+sort_order = 60
+larva_cost = 3
+pulp_cost = 56.0
+enzyme_cost = 12.0
+helix_cost = 5.0
+unlock_devour = 260.0
+hatch_seconds = 9.0
+power = 19.0
+toughness = 0.9
+damage_tag = "pierce"
+deployment_batch = 1

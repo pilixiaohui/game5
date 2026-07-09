@@ -6,6 +6,7 @@
 script = ExtResource("1")
 id = "flame_turret"
 display_name = "火焰炮塔"
+sort_order = 30
 pressure = 24.0
 armor = 1.4
 weakness_tag = "acid"

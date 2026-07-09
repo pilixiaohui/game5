@@ -7,6 +7,7 @@ script = ExtResource("1")
 id = "hydralisk"
 display_name = "刺蛇"
 description = "中程穿刺单位，依赖活性酶，能明显改善盾卫战线。"
+sort_order = 20
 larva_cost = 1
 pulp_cost = 26.0
 enzyme_cost = 4.0

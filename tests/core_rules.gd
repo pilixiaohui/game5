@@ -5,7 +5,9 @@ const GameStateScript := preload("res://scripts/autoload/GameState.gd")
 const SaveServiceScript := preload("res://scripts/autoload/SaveService.gd")
 const SimulationServiceScript := preload("res://scripts/autoload/SimulationService.gd")
 const BattlefieldViewScript := preload("res://scripts/ui/BattlefieldView.gd")
+const BattleCommandPanelScript := preload("res://scripts/ui/BattleCommandPanel.gd")
 const MainScript := preload("res://scripts/ui/Main.gd")
+const PlayerCommandServiceScript := preload("res://scripts/services/PlayerCommandService.gd")
 
 var ConfigDB
 var GameState
@@ -66,6 +68,10 @@ func _run() -> void:
 	_test_factory_public_battlefield_commands_use_hydralisk()
 	_test_content_expansion_units_and_research_bastion()
 	_test_mobile_readability_and_completed_factory_guidance()
+	_test_stage0_ui_delegates_mutation_to_services()
+	_test_stage1_manifest_counts_and_unique_ids()
+	_test_stage1_old_save_defaults_new_content()
+	_test_stage1_public_ui_visible_content_and_rule_effects()
 	_test_plugin_ab_comparison()
 	_test_offline_cap()
 	_test_save_integrity()
@@ -698,6 +704,159 @@ func _find_scroll_container(node: Node) -> ScrollContainer:
 		if found != null:
 			return found
 	return null
+
+func _test_stage0_ui_delegates_mutation_to_services() -> void:
+	var main_source := FileAccess.get_file_as_string("res://scripts/ui/Main.gd")
+	var command_source := FileAccess.get_file_as_string("res://scripts/services/PlayerCommandService.gd")
+	var panel_source := FileAccess.get_file_as_string("res://scripts/ui/BattleCommandPanel.gd")
+	_assert(main_source.find("PlayerCommandServiceScript") >= 0, "stage0 Main should use the player command service facade")
+	_assert(main_source.find("BattleCommandPanelScript") >= 0, "stage0 Main should extract the battlefield command row into a panel")
+	_assert(command_source.find("func prepare_wave") >= 0 and command_source.find("func assault_push") >= 0, "stage0 command service should expose battle command forwarding")
+	_assert(command_source.find("GameState.set_feedback") >= 0 and command_source.find("GameState.reset_new_game") >= 0, "stage0 command service should own save/load/new feedback mutations")
+	_assert(panel_source.find("signal command_requested") >= 0, "stage0 battle command panel should emit public UI commands")
+
+	for forbidden in [
+		"GameState.set_feedback",
+		"GameState.reset_new_game",
+		"GameState.resources =",
+		"GameState.resources[",
+		"GameState.reserves =",
+		"GameState.reserves[",
+		"GameState.region_progress =",
+		"GameState.region_progress[",
+		"GameState.field_units =",
+		"GameState.field_units[",
+		"GameState.deployment_intensity =",
+		"GameState.deployment_intensity[",
+		"SaveService.save_game",
+		"SaveService.load_game",
+		"SimulationService.purchase_organ(",
+		"SimulationService.hatch_unit(",
+		"SimulationService.select_region(",
+		"SimulationService.set_deployment(",
+		"SimulationService.retreat(",
+		"SimulationService.buy_or_equip_plugin(",
+		"SimulationService.perform_prestige(",
+		"SimulationService.prepare_wave(",
+		"SimulationService.assault_push("
+	]:
+		_assert(main_source.find(forbidden) < 0, "stage0 Main must delegate mutation command instead of using: %s" % forbidden)
+
+func _test_stage1_manifest_counts_and_unique_ids() -> void:
+	ConfigDB.load_all()
+	_assert(ConfigDB.units.size() >= 6, "stage1 manifest should expose at least six player units")
+	_assert(ConfigDB.organs.size() >= 8, "stage1 manifest should expose at least eight organs")
+	_assert(ConfigDB.plugins.size() >= 10, "stage1 manifest should expose at least ten enabled plugins")
+	_assert(ConfigDB.regions.size() >= 5, "stage1 manifest should expose at least five regions")
+	_assert(ConfigDB.enemies.size() >= 4, "stage1 manifest should expose at least four enemies")
+	_assert(_resource_dir_has_unique_ids("res://data/units", ConfigDB.units.size()), "unit resource ids should be unique and directory-scanned")
+	_assert(_resource_dir_has_unique_ids("res://data/organs", ConfigDB.organs.size()), "organ resource ids should be unique and directory-scanned")
+	_assert(_resource_dir_has_unique_ids("res://data/plugins", ConfigDB.plugins.size()), "plugin resource ids should be unique and directory-scanned")
+	_assert(_resource_dir_has_unique_ids("res://data/regions", ConfigDB.regions.size()), "region resource ids should be unique and directory-scanned")
+	_assert(_resource_dir_has_unique_ids("res://data/enemies", ConfigDB.enemies.size()), "enemy resource ids should be unique and directory-scanned")
+	_assert(ConfigDB.get_unit_ids().has("roach") and ConfigDB.get_unit_ids().has("mutalisk"), "new units should be indexed from resource files")
+	_assert(ConfigDB.get_region_ids().has("chitin_pass") and ConfigDB.get_region_ids().has("orbital_relay"), "new regions should be indexed from resource files")
+
+func _test_stage1_old_save_defaults_new_content() -> void:
+	GameState.reset_new_game(false)
+	var old_save := {
+		"version": 0,
+		"resources": {"pulp": 120.0, "enzyme": 40.0, "helix": 12.0, "larva": 12.0, "mutation": 0.0},
+		"organ_levels": {"mucus_fronds": 2},
+		"reserves": {"zergling": 3},
+		"field_units": {},
+		"deployment_intensity": {},
+		"plugins_owned": {},
+		"equipped_plugin": "",
+		"region_progress": {"slum_edge": 12.0},
+		"region_unlocked": {"slum_edge": true},
+		"active_region": "slum_edge",
+		"total_devour": 12.0,
+		"last_save_unix": Time.get_unix_time_from_system()
+	}
+	var file := FileAccess.open(SaveService.SAVE_PATH, FileAccess.WRITE)
+	_assert(file != null, "stage1 old save test should be able to write a legacy save fixture")
+	if file != null:
+		file.store_string(JSON.stringify(old_save))
+		file.close()
+	_assert(SaveService.load_game(), "stage1 old save fixture should load through SaveService")
+	for unit_id in ["roach", "mutalisk"]:
+		_assert(GameState.reserves.has(unit_id) and int(GameState.reserves.get(unit_id, -1)) == 0, "old save load should default new unit reserve: %s" % unit_id)
+		_assert(GameState.field_units.has(unit_id) and int(GameState.field_units.get(unit_id, -1)) == 0, "old save load should default new unit field count: %s" % unit_id)
+		_assert(GameState.deployment_intensity.has(unit_id) and int(GameState.deployment_intensity.get(unit_id, -1)) == 0, "old save load should default new unit deployment: %s" % unit_id)
+	for organ_id in ["spore_chimney", "helix_loom"]:
+		_assert(GameState.organ_levels.has(organ_id) and int(GameState.organ_levels.get(organ_id, -1)) == 0, "old save load should default new organ level: %s" % organ_id)
+	for region_id in ["chitin_pass", "orbital_relay"]:
+		_assert(GameState.region_progress.has(region_id), "old save load should add new region progress key: %s" % region_id)
+		_assert(GameState.region_unlocked.has(region_id), "old save load should add new region unlock key: %s" % region_id)
+
+func _test_stage1_public_ui_visible_content_and_rule_effects() -> void:
+	GameState.reset_new_game(false)
+	GameState.ensure_config_defaults()
+	GameState.resources = {"pulp": 2000.0, "enzyme": 1000.0, "helix": 1000.0, "larva": 200.0, "mutation": 0.0}
+	GameState.total_devour = 320.0
+	GameState.region_progress["slum_edge"] = 100.0
+	GameState.region_progress["factory_wall"] = 100.0
+	GameState.region_progress["research_bastion"] = 100.0
+	GameState.region_unlocked["factory_wall"] = true
+	GameState.region_unlocked["research_bastion"] = true
+	GameState.region_unlocked["chitin_pass"] = true
+	GameState.region_unlocked["orbital_relay"] = true
+	GameState.active_region = "chitin_pass"
+	GameState.ensure_config_defaults()
+
+	var main = MainScript.new()
+	main.ConfigDB = ConfigDB
+	main.GameState = GameState
+	main.SaveService = SaveService
+	main.SimulationService = SimulationService
+	root.add_child(main)
+	main.call("_refresh")
+	var unit_buttons: Dictionary = main.get("_unit_buttons")
+	var organ_buttons: Dictionary = main.get("_organ_buttons")
+	var plugin_buttons: Dictionary = main.get("_plugin_buttons")
+	var region_buttons: Dictionary = main.get("_region_buttons")
+	_assert(unit_buttons.size() >= 6 and unit_buttons.has("roach") and unit_buttons.has("mutalisk"), "formal UI should show six-plus scanned unit hatch buttons")
+	_assert(organ_buttons.size() >= 8 and organ_buttons.has("spore_chimney") and organ_buttons.has("helix_loom"), "formal UI should show eight-plus scanned organ buttons")
+	_assert(plugin_buttons.size() >= 10 and plugin_buttons.has("burrowed_plating") and plugin_buttons.has("glaive_rebound"), "formal UI should show ten-plus scanned plugin buttons")
+	_assert(region_buttons.size() >= 5 and region_buttons.has("chitin_pass") and region_buttons.has("orbital_relay"), "formal UI should show five-plus scanned region buttons")
+	_assert(String(unit_buttons["roach"].text).find("蟑螂") >= 0 and String(unit_buttons["mutalisk"].text).find("飞螳") >= 0, "new unit buttons should expose player-readable names")
+	_assert(String(plugin_buttons["burrowed_plating"].text).find("蟑螂") >= 0 and String(plugin_buttons["glaive_rebound"].text).find("飞螳") >= 0, "new plugin buttons should expose use targets")
+	main.queue_free()
+
+	_assert(SimulationService.hatch_unit("roach", 2), "new roach should hatch through real resource costs after unlock")
+	_assert(SimulationService.hatch_unit("mutalisk", 1), "new mutalisk should hatch through real resource costs after unlock")
+	_assert(SimulationService.select_region("chitin_pass"), "new chitin pass should be selectable through service path")
+	_assert(SimulationService.prepare_wave("roach"), "new roach should prepare through real wave path")
+	_assert(SimulationService.assault_push("roach"), "new roach should commit through real assault path")
+	SimulationService.simulate_seconds(4.0, true)
+	_assert(float(GameState.region_progress.get("chitin_pass", 0.0)) > 0.0, "new chitin pass should advance from real combat power")
+	_assert(float(GameState.battle_report.get("power", 0.0)) > float(GameState.battle_report.get("pressure", 0.0)), "new region advance should come from power exceeding pressure")
+
+	for plugin_id in ["adrenal_hooks", "regenerative_slime", "serrated_spines", "acid_reservoir", "hardened_carapace", "burrowed_plating", "glaive_rebound", "swarm_synapse"]:
+		GameState.resources["helix"] = 1000.0
+		var plugin = ConfigDB.get_plugin(plugin_id)
+		_assert(plugin != null and plugin.target_unit != "", "enabled plugin should declare a target unit: %s" % plugin_id)
+		_assert(float(plugin.damage_bonus) > 0.0 or float(plugin.survival_bonus) > 0.0, "enabled plugin should have a rule-facing bonus: %s" % plugin_id)
+		_assert(SimulationService.buy_or_equip_plugin(plugin_id), "enabled plugin should buy/equip through service path: %s" % plugin_id)
+		var projection: Dictionary = SimulationService.battle_projection(plugin.target_unit)
+		_assert(float(projection.get("plugin_bonus", 0.0)) > 0.0 or float(projection.get("loss_reduction", 0.0)) > 0.0, "enabled plugin should alter projection rules: %s" % plugin_id)
+
+func _resource_dir_has_unique_ids(dir_path: String, expected_count: int) -> bool:
+	var ids: Dictionary = {}
+	var dir := DirAccess.open(dir_path)
+	if dir == null:
+		return false
+	for file_name in dir.get_files():
+		if not (file_name.ends_with(".tres") or file_name.ends_with(".res")):
+			continue
+		var resource = load("%s/%s" % [dir_path, file_name])
+		if resource == null or String(resource.id) == "":
+			return false
+		if ids.has(resource.id):
+			return false
+		ids[resource.id] = true
+	return ids.size() == expected_count
 
 func _test_plugin_ab_comparison() -> void:
 	GameState.resources["helix"] = 20.0

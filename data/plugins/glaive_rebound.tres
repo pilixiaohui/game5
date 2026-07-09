@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="PluginConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/resources/PluginConfig.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "glaive_rebound"
+display_name = "回旋刃翼"
+description = "飞螳构筑：提高后排点杀推进，适合轨道火力密集区。"
+sort_order = 90
+target_unit = "mutalisk"
+cost_helix = 20.0
+damage_bonus = 0.34
+survival_bonus = 0.006
+counter_tag = "pierce"
+unlock_devour = 260.0

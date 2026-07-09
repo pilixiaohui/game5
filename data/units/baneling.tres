@@ -7,6 +7,7 @@ script = ExtResource("1")
 id = "baneling"
 display_name = "爆裂虫"
 description = "酸爆攻坚单位；克制火焰炮塔和密集火力，推进强但损耗高。"
+sort_order = 30
 larva_cost = 2
 pulp_cost = 34.0
 enzyme_cost = 8.0

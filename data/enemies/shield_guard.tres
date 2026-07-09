@@ -6,6 +6,7 @@
 script = ExtResource("1")
 id = "shield_guard"
 display_name = "盾卫"
+sort_order = 20
 pressure = 18.0
 armor = 2.2
 weakness_tag = "pierce"
