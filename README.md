@@ -1,5 +1,16 @@
 # 异种起源：无尽洪流 - Godot 垂直切片
 
+## 仓库内项目索引
+
+本仓库包含两个相互隔离的 Godot 4 项目，需要分别导入、运行和构建：
+
+| 项目路径 | 界面规格 | 运行 | 验证 |
+| --- | --- | --- | --- |
+| 仓库根目录 `./` | 540x960 竖屏技术切片 | `godot4 --path .` | `godot4 --headless --path . -s res://tests/core_rules.gd` |
+| `variants/desktop_v1/` | 1600x900 桌面第一版（最小 1280x720） | `godot4 --path variants/desktop_v1` | `cd variants/desktop_v1 && ./scripts/verify.sh` |
+
+两个项目保留各自的入口、Autoload 与存档契约；存档不互读，也不做自动迁移。以下内容仅描述仓库根目录项目。
+
 ## 运行
 
 ```bash
