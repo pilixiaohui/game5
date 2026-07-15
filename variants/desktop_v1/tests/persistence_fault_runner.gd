@@ -11,7 +11,9 @@ const FIRST_SAVE_CASES: Array[Dictionary] = [
 	{"name": "staged snapshot validation read", "boundary": "validate_staged_snapshot", "phase": "read"},
 	{"name": "existing primary existence", "boundary": "inspect_existing_primary", "phase": "exists"},
 	{"name": "first primary commit", "boundary": "commit_first_primary"},
-	{"name": "first primary validation", "boundary": "validate_first_primary", "phase": "read"},
+	{"name": "first primary validation open", "boundary": "validate_first_primary", "phase": "open", "expect_uncertain": true},
+	{"name": "first primary validation read", "boundary": "validate_first_primary", "phase": "read", "expect_uncertain": true},
+	{"name": "invalid first primary removal", "boundary": "remove_invalid_committed_slot", "phase": "remove", "corrupt_after": "commit_first_primary", "expect_uncertain": true},
 ]
 
 const UPDATE_CASES: Array[Dictionary] = [
@@ -22,34 +24,35 @@ const UPDATE_CASES: Array[Dictionary] = [
 	{"name": "stale previous backup cleanup", "boundary": "remove_stale_backup_previous", "phase": "remove", "seed_suffix": ".bak.prev"},
 	{"name": "existing backup preservation", "boundary": "copy_existing_backup_to_previous"},
 	{"name": "previous backup validation", "boundary": "validate_previous_backup", "phase": "read"},
-	{"name": "existing backup removal", "boundary": "remove_existing_backup", "phase": "remove"},
-	{"name": "backup commit", "boundary": "commit_backup"},
-	{"name": "backup rollback cleanup", "boundary": "restore_previous_backup_cleanup", "phase": "remove", "fail_first": "commit_backup", "seed_suffix": ".bak.recover"},
-	{"name": "backup rollback copy", "boundary": "restore_previous_backup_copy", "fail_first": "commit_backup"},
-	{"name": "backup rollback validation", "boundary": "validate_restore_previous_backup", "phase": "read", "fail_first": "commit_backup"},
-	{"name": "backup rollback destination status", "boundary": "restore_previous_backup_destination", "phase": "exists", "fail_first": "commit_backup"},
-	{"name": "backup rollback commit", "boundary": "restore_previous_backup_commit", "fail_first": "commit_backup"},
-	{"name": "committed backup validation", "boundary": "validate_committed_backup", "phase": "read"},
 	{"name": "stale primary rollback cleanup", "boundary": "remove_stale_rollback", "phase": "remove", "seed_suffix": ".rollback"},
 	{"name": "primary rollback copy", "boundary": "copy_primary_to_rollback"},
 	{"name": "primary rollback validation", "boundary": "validate_rollback", "phase": "read"},
-	{"name": "primary removal", "boundary": "remove_primary_for_commit", "phase": "remove"},
+	{"name": "primary commit destination inspection", "boundary": "inspect_primary_commit_destination", "phase": "exists"},
 	{"name": "primary commit", "boundary": "commit_primary"},
-	{"name": "primary rollback cleanup", "boundary": "restore_primary_from_rollback_cleanup", "phase": "remove", "fail_first": "commit_primary", "seed_suffix": ".recover"},
-	{"name": "primary rollback copy", "boundary": "restore_primary_from_rollback_copy", "fail_first": "commit_primary"},
-	{"name": "primary rollback validation", "boundary": "validate_restore_primary_from_rollback", "phase": "read", "fail_first": "commit_primary"},
-	{"name": "primary rollback destination status", "boundary": "restore_primary_from_rollback_destination", "phase": "exists", "fail_first": "commit_primary"},
-	{"name": "primary rollback commit", "boundary": "restore_primary_from_rollback_commit", "fail_first": "commit_primary"},
-	{"name": "committed primary validation", "boundary": "validate_committed_primary", "phase": "read"},
-	{"name": "invalid committed primary removal", "boundary": "remove_invalid_committed_primary", "phase": "remove", "corrupt_after": "commit_primary"},
-	{"name": "invalid primary rollback cleanup", "boundary": "restore_invalid_primary_from_rollback_cleanup", "phase": "remove", "corrupt_after": "commit_primary", "seed_suffix": ".recover"},
-	{"name": "invalid primary rollback copy", "boundary": "restore_invalid_primary_from_rollback_copy", "corrupt_after": "commit_primary"},
-	{"name": "invalid primary rollback validation", "boundary": "validate_restore_invalid_primary", "phase": "read", "corrupt_after": "commit_primary"},
-	{"name": "invalid primary rollback destination status", "boundary": "restore_invalid_primary_destination", "phase": "exists", "corrupt_after": "commit_primary"},
-	{"name": "invalid primary rollback commit", "boundary": "restore_invalid_primary_commit", "corrupt_after": "commit_primary"},
+	{"name": "committed primary validation open", "boundary": "validate_committed_primary", "phase": "open", "expect_uncertain": true},
+	{"name": "committed primary validation read", "boundary": "validate_committed_primary", "phase": "read", "expect_uncertain": true},
+	{"name": "primary corruption rollback cleanup", "boundary": "restore_primary_from_rollback_cleanup", "phase": "remove", "corrupt_after": "commit_primary", "seed_suffix": ".recover"},
+	{"name": "primary corruption rollback copy", "boundary": "restore_primary_from_rollback_copy", "corrupt_after": "commit_primary"},
+	{"name": "primary corruption rollback validation", "boundary": "validate_restore_primary_from_rollback", "phase": "read", "corrupt_after": "commit_primary"},
+	{"name": "primary corruption rollback destination status", "boundary": "restore_primary_from_rollback_destination", "phase": "exists", "corrupt_after": "commit_primary"},
+	{"name": "primary corruption rollback commit", "boundary": "restore_primary_from_rollback_commit", "corrupt_after": "commit_primary"},
+	{"name": "backup fallback cleanup", "boundary": "restore_invalid_primary_from_rollback_cleanup", "phase": "remove", "corrupt_after": "commit_primary", "fail_first": "restore_primary_from_rollback_commit", "fail_first_phase": "rename", "expect_uncertain": true},
+	{"name": "backup fallback copy", "boundary": "restore_invalid_primary_from_rollback_copy", "corrupt_after": "commit_primary", "fail_first": "restore_primary_from_rollback_copy", "fail_first_phase": "copy", "expect_uncertain": true},
+	{"name": "backup fallback validation", "boundary": "validate_restore_invalid_primary", "phase": "read", "corrupt_after": "commit_primary", "fail_first": "restore_primary_from_rollback_copy", "fail_first_phase": "copy", "expect_uncertain": true},
+	{"name": "backup fallback destination status", "boundary": "restore_invalid_primary_destination", "phase": "exists", "corrupt_after": "commit_primary", "fail_first": "restore_primary_from_rollback_copy", "fail_first_phase": "copy", "expect_uncertain": true},
+	{"name": "backup fallback commit", "boundary": "restore_invalid_primary_commit", "corrupt_after": "commit_primary", "fail_first": "restore_primary_from_rollback_copy", "fail_first_phase": "copy", "expect_uncertain": true},
+	{"name": "backup commit destination inspection", "boundary": "inspect_backup_commit_destination", "phase": "exists", "expect_success": true, "preserved_backup": true},
+	{"name": "backup commit", "boundary": "commit_backup", "expect_success": true, "preserved_backup": true},
+	{"name": "committed backup validation open", "boundary": "validate_committed_backup", "phase": "open", "expect_success": true},
+	{"name": "committed backup validation read", "boundary": "validate_committed_backup", "phase": "read", "expect_success": true},
+	{"name": "corrupt backup restore cleanup", "boundary": "restore_previous_backup_cleanup", "phase": "remove", "corrupt_after": "commit_backup", "expect_success": true, "preserved_backup": true, "seed_suffix": ".bak.recover"},
+	{"name": "corrupt backup restore copy", "boundary": "restore_previous_backup_copy", "corrupt_after": "commit_backup", "expect_success": true, "preserved_backup": true},
+	{"name": "corrupt backup restore validation", "boundary": "validate_restore_previous_backup", "phase": "read", "corrupt_after": "commit_backup", "expect_success": true, "preserved_backup": true},
+	{"name": "corrupt backup restore destination status", "boundary": "restore_previous_backup_destination", "phase": "exists", "corrupt_after": "commit_backup", "expect_success": true, "preserved_backup": true},
+	{"name": "corrupt backup restore commit", "boundary": "restore_previous_backup_commit", "corrupt_after": "commit_backup", "expect_success": true, "preserved_backup": true},
 	{"name": "successful commit rollback cleanup", "boundary": "cleanup_rollback", "phase": "remove", "expect_success": true},
 	{"name": "successful commit backup cleanup", "boundary": "cleanup_backup_previous", "phase": "remove", "expect_success": true},
-	{"name": "backup post-commit corruption", "boundary": "commit_backup", "corrupt_only": true},
+	{"name": "backup post-commit corruption", "boundary": "commit_backup", "corrupt_only": true, "expect_success": true, "preserved_backup": true},
 	{"name": "primary post-commit corruption", "boundary": "commit_primary", "corrupt_only": true},
 ]
 
@@ -132,6 +135,7 @@ func _assert_coverage_contract() -> void:
 
 func _test_classification_callsite_matrix() -> void:
 	for index in range(CLASSIFICATION_CASES.size()):
+		_reset_subject()
 		var case := CLASSIFICATION_CASES[index]
 		var fixture := _seed_three_generations(8800 + index)
 		var primary_before := _read_text(subject.DEFAULT_SAVE_PATH)
@@ -165,6 +169,7 @@ func _test_classification_callsite_matrix() -> void:
 
 func _test_first_save_failure_matrix() -> void:
 	for index in range(FIRST_SAVE_CASES.size()):
+		_reset_subject()
 		var case := FIRST_SAVE_CASES[index]
 		_cleanup_slots()
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(subject.DEFAULT_SAVE_PATH.get_base_dir()))
@@ -174,17 +179,29 @@ func _test_first_save_failure_matrix() -> void:
 		var attempted_tick := int(subject.state.tick)
 		if case.has("seed_suffix"):
 			_write_text(subject.DEFAULT_SAVE_PATH + case.seed_suffix, JSON.stringify(subject.snapshot()))
+		if case.has("corrupt_after"):
+			subject.corrupt_after(case.corrupt_after)
 		_inject_case(case)
 		_assert_false(subject.save_game(), "%s injection must reject the first save" % case.name)
 		_assert_case_reached(case)
 		_assert_false(FileAccess.file_exists(subject.DEFAULT_SAVE_PATH + subject.BACKUP_SUFFIX), "%s must not invent a committed backup" % case.name)
+		_assert_equal(subject.last_commit_outcome(), subject.COMMIT_UNCERTAIN if case.get("expect_uncertain", false) else subject.COMMIT_NOT_COMMITTED, "%s must report the explicit commit outcome" % case.name)
+		_assert_equal(subject.is_persistence_blocked(), case.get("expect_uncertain", false), "%s blocking must match its commit outcome" % case.name)
 		_assert_no_unauthorized_side_effects(case.name)
 		subject.clear_injections()
-		_assert_true(subject.save_game(), "%s must permit a clean retry" % case.name)
-		_assert_loads_one_complete_generation(case.name, [attempted_tick])
+		if case.get("expect_uncertain", false):
+			if case.has("corrupt_after"):
+				_assert_false(subject.load_game(), "%s cannot invent authority after an invalid first slot could not be removed" % case.name)
+			else:
+				_assert_true(subject.load_game(), "%s must resolve authority by reloading the committed first slot" % case.name)
+				_assert_equal(int(subject.state.tick), attempted_tick, "%s reload must install the complete attempted generation" % case.name)
+		else:
+			_assert_true(subject.save_game(), "%s must permit a clean retry" % case.name)
+			_assert_loads_one_complete_generation(case.name, [attempted_tick])
 
 func _test_existing_slot_update_matrix() -> void:
 	for index in range(UPDATE_CASES.size()):
+		_reset_subject()
 		var case := UPDATE_CASES[index]
 		var fixture := _seed_three_generations(9100 + index)
 		if case.has("seed_suffix"):
@@ -193,7 +210,7 @@ func _test_existing_slot_update_matrix() -> void:
 		var attempted_tick := int(subject.state.tick)
 		subject.clear_injections()
 		if case.has("fail_first"):
-			subject.inject(case.fail_first, "rename")
+			subject.inject(case.fail_first, case.get("fail_first_phase", "rename"))
 		if not case.get("corrupt_only", false):
 			_inject_case(case)
 		if case.has("corrupt_after"):
@@ -205,16 +222,20 @@ func _test_existing_slot_update_matrix() -> void:
 			_assert_true(save_result, "%s is post-commit cleanup and must keep the save successful" % case.name)
 		else:
 			_assert_false(save_result, "%s injection must reject the update" % case.name)
+		var expected_outcome: String = subject.COMMIT_COMMITTED if case.get("expect_success", false) else subject.COMMIT_UNCERTAIN if case.get("expect_uncertain", false) else subject.COMMIT_NOT_COMMITTED
+		_assert_equal(subject.last_commit_outcome(), expected_outcome, "%s must report the explicit commit outcome" % case.name)
+		_assert_equal(subject.is_persistence_blocked(), case.get("expect_uncertain", false), "%s blocking must match its commit outcome" % case.name)
 		_assert_case_reached(case)
-		var promised_backup: String = fixture.primary if case.get("expect_success", false) else fixture.backup
+		var promised_backup: String = fixture.backup if case.get("preserved_backup", false) or not case.get("expect_success", false) else fixture.primary
 		_assert_promised_backup(case.name, promised_backup)
 		_assert_no_unauthorized_side_effects(case.name)
 		subject.clear_injections()
-		_assert_loads_one_complete_generation(case.name, [int(fixture.primary_tick), attempted_tick])
+		_assert_loads_one_complete_generation(case.name, [int(fixture.backup_tick), int(fixture.primary_tick), attempted_tick])
 		_assert_promised_backup(case.name, promised_backup)
 
 func _test_recovery_failure_matrix() -> void:
 	for index in range(RECOVERY_CASES.size()):
+		_reset_subject()
 		var case := RECOVERY_CASES[index]
 		var fixture := _seed_three_generations(9500 + index)
 		var primary_path: String = subject.DEFAULT_SAVE_PATH
@@ -242,6 +263,7 @@ func _test_recovery_failure_matrix() -> void:
 		_assert_equal(_read_text(primary_path + subject.BACKUP_SUFFIX), fixture.backup, "%s retry must preserve exact backup bytes" % case.name)
 
 func _test_successful_update_cleans_scratch() -> void:
+	_reset_subject()
 	var fixture := _seed_three_generations(9700)
 	subject.advance_steps(2)
 	_assert_true(subject.save_game(), "successful cleanup fixture must save")
@@ -335,6 +357,14 @@ func _cleanup_slots() -> void:
 		var path: String = subject.DEFAULT_SAVE_PATH + suffix
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+
+func _reset_subject() -> void:
+	if is_instance_valid(subject):
+		subject.free()
+	subject = FaultSession.new()
+	subject.name = "FaultSession"
+	root.add_child(subject)
+	subject.set_process(false)
 
 func _argument(prefix: String) -> String:
 	for argument in OS.get_cmdline_user_args():

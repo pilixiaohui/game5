@@ -188,6 +188,7 @@ func _test_retreat_persistence_failures_are_atomic() -> void:
 		var state_before := JSON.stringify(subject.snapshot())
 		var primary_before := FileAccess.get_file_as_bytes(subject.DEFAULT_SAVE_PATH)
 		var backup_before := FileAccess.get_file_as_bytes(subject.DEFAULT_SAVE_PATH + subject.BACKUP_SUFFIX)
+		var committed_before := _committed_slot_fingerprint(subject)
 		subject.clear_injections()
 		subject.inject(case.boundary, case.phase)
 		var page := BattlePage.new(subject)
@@ -210,6 +211,9 @@ func _test_retreat_persistence_failures_are_atomic() -> void:
 		_assert_equal(JSON.stringify(subject.snapshot()), state_before, "%s failure must preserve memory" % case.name)
 		_assert_equal(FileAccess.get_file_as_bytes(subject.DEFAULT_SAVE_PATH), primary_before, "%s failure must preserve primary bytes" % case.name)
 		_assert_equal(FileAccess.get_file_as_bytes(subject.DEFAULT_SAVE_PATH + subject.BACKUP_SUFFIX), backup_before, "%s failure must preserve backup bytes" % case.name)
+		_assert_equal(_committed_slot_fingerprint(subject), committed_before, "%s not-committed result must preserve path/hash/size/nanosecond mtime" % case.name)
+		_assert_no_save_transients_for(subject, "%s not-committed result" % case.name)
+		_assert_commit_outcome(subject, "not_committed", "%s failure" % case.name)
 		_assert_equal(ended_events.size(), 0, "%s failure must not emit battle_ended" % case.name)
 		_assert_true("%s.%s" % [case.boundary, case.phase] in subject.operation_phase_trace, "%s fixture must reach the injected phase" % case.name)
 		subject.clear_injections()
@@ -220,10 +224,117 @@ func _test_retreat_persistence_failures_are_atomic() -> void:
 		subject.set_process(false)
 		page.queue_free()
 		await process_frame
+	await _test_post_commit_retreat_outcomes(subject, ended_events)
 	subject.clear_injections()
 	_cleanup_slots_for(subject)
 	subject.queue_free()
 	await process_frame
+
+func _test_post_commit_retreat_outcomes(subject: Node, ended_events: Array) -> void:
+	var cases := [
+		{"name": "existing post-commit open", "existing": true, "boundary": "validate_committed_primary", "phase": "open", "outcome": "uncertain"},
+		{"name": "existing post-commit read", "existing": true, "boundary": "validate_committed_primary", "phase": "read", "outcome": "uncertain"},
+		{"name": "existing post-commit corruption", "existing": true, "boundary": "commit_primary", "corrupt": true, "outcome": "not_committed"},
+		{"name": "first-save post-commit open", "existing": false, "boundary": "validate_first_primary", "phase": "open", "outcome": "uncertain"},
+		{"name": "first-save post-commit read", "existing": false, "boundary": "validate_first_primary", "phase": "read", "outcome": "uncertain"},
+		{"name": "first-save post-commit corruption", "existing": false, "boundary": "commit_first_primary", "corrupt": true, "outcome": "not_committed"},
+	]
+	for index in range(cases.size()):
+		var case: Dictionary = cases[index]
+		_cleanup_slots_for(subject)
+		subject.clear_injections()
+		ended_events.clear()
+		subject.new_game(8500 + index)
+		subject.set_speed(4)
+		subject.state.units.biter = 16
+		subject.state.units.root_spore = 4
+		_assert_true(subject.attack_node("B"), "%s fixture must start a production battle" % case.name)
+		if case.existing:
+			_assert_true(subject.save_game(), "%s fixture must create a primary" % case.name)
+			_assert_true(subject.save_game(), "%s fixture must create a committed backup" % case.name)
+		var state_before := JSON.stringify(subject.snapshot())
+		var primary_before := FileAccess.get_file_as_bytes(subject.DEFAULT_SAVE_PATH)
+		var backup_before := FileAccess.get_file_as_bytes(subject.DEFAULT_SAVE_PATH + subject.BACKUP_SUFFIX)
+		subject.clear_injections()
+		if case.get("corrupt", false):
+			subject.corrupt_after(case.boundary)
+		else:
+			subject.inject(case.boundary, case.phase)
+		var page := BattlePage.new(subject)
+		root.add_child(page)
+		page.set_snapshot(subject.snapshot())
+		await _settle()
+		var retreat_button := page.find_child("RetreatButton", true, false) as Button
+		var confirm_button := page.find_child("ConfirmRetreatButton", true, false) as Button
+		var confirmation := page.find_child("RetreatConfirmation", true, false) as Control
+		_assert_true(retreat_button != null and confirm_button != null and confirmation != null, "%s must expose production retreat controls" % case.name)
+		if retreat_button == null or confirm_button == null or confirmation == null:
+			page.queue_free()
+			await process_frame
+			continue
+		subject.set_process(true)
+		var tick_before := int(subject.state.tick)
+		await _click_same_frame(retreat_button)
+		await _click_same_frame(confirm_button)
+		_assert_equal(JSON.stringify(subject.snapshot()), state_before, "%s failed call must not install the candidate in memory" % case.name)
+		_assert_equal(ended_events.size(), 0, "%s failed call must not emit battle_ended" % case.name)
+		_assert_commit_outcome(subject, case.outcome, case.name)
+		if case.outcome == "uncertain":
+			_assert_true(subject.is_persistence_blocked(), "%s must enter persistence-blocked state" % case.name)
+			_assert_true(not confirmation.visible, "%s must close the retry confirmation after the commit point" % case.name)
+			var blocked_band := page.find_child("PersistenceBlocked", true, false) as Control
+			var reload_button := page.find_child("ReloadAfterPersistenceBlock", true, false) as Button
+			_assert_true(blocked_band != null and blocked_band.visible, "%s must show a player-visible persistence-blocked state" % case.name)
+			_assert_true(reload_button != null and reload_button.visible, "%s must expose reload as the only recovery command" % case.name)
+			await _wait_frames(12)
+			_assert_equal(int(subject.state.tick), tick_before, "%s must freeze the real scheduler" % case.name)
+			if subject.is_persistence_blocked():
+				var target_before := int(subject.state.targets.worker)
+				subject.set_unit_target("worker", 1)
+				_assert_equal(int(subject.state.targets.worker), target_before, "%s must reject later gameplay mutations" % case.name)
+				var committed_after_uncertain := _committed_slot_fingerprint(subject)
+				_assert_false(subject.save_game(), "%s must reject later saves" % case.name)
+				_assert_equal(_committed_slot_fingerprint(subject), committed_after_uncertain, "%s blocked save must not touch committed slots" % case.name)
+			var disk_candidate := _read_snapshot_json(subject.DEFAULT_SAVE_PATH)
+			var disk_battle: Variant = disk_candidate.get("active_battle", null)
+			_assert_true(disk_battle is Dictionary and (disk_battle as Dictionary).is_empty(), "%s primary must contain the complete retreat candidate after rename" % case.name)
+			if case.existing:
+				_assert_equal(FileAccess.get_file_as_bytes(subject.DEFAULT_SAVE_PATH + subject.BACKUP_SUFFIX), backup_before, "%s must preserve the committed backup until authority is reloaded" % case.name)
+			subject.clear_injections()
+			if reload_button != null:
+				await _click_same_frame(reload_button)
+			else:
+				_assert_true(subject.load_game(), "%s clean reload fallback must succeed" % case.name)
+			_assert_true(not subject.is_persistence_blocked(), "%s clean reload must clear persistence blocking" % case.name)
+			_assert_true(subject.state.active_battle.is_empty(), "%s reload must install the committed retreat candidate" % case.name)
+			_assert_equal(ended_events.size(), 0, "%s reload must not synthesize battle_ended" % case.name)
+			_assert_no_save_transients_for(subject, "%s reload" % case.name)
+		else:
+			_assert_false(subject.is_persistence_blocked(), "%s known rollback must remain retryable" % case.name)
+			_assert_true(confirmation.visible, "%s known rollback must retain the retry confirmation" % case.name)
+			_assert_equal(FileAccess.get_file_as_bytes(subject.DEFAULT_SAVE_PATH + subject.BACKUP_SUFFIX), backup_before, "%s known rollback must preserve backup bytes" % case.name)
+			if case.existing:
+				_assert_equal(FileAccess.get_file_as_bytes(subject.DEFAULT_SAVE_PATH), primary_before, "%s must restore the prior primary generation" % case.name)
+				subject.clear_injections()
+				_assert_true(subject.load_game(), "%s clean reload must install the restored old generation" % case.name)
+				_assert_true(not subject.state.active_battle.is_empty(), "%s restored generation must retain the battle for retry" % case.name)
+			else:
+				_assert_false(FileAccess.file_exists(subject.DEFAULT_SAVE_PATH), "%s must remove the invalid first primary" % case.name)
+				_assert_false(FileAccess.file_exists(subject.DEFAULT_SAVE_PATH + subject.BACKUP_SUFFIX), "%s must not invent a backup" % case.name)
+				subject.clear_injections()
+			_assert_no_save_transients_for(subject, "%s rollback" % case.name)
+			page.set_snapshot(subject.snapshot())
+			await _click_same_frame(confirm_button)
+			_assert_true(not confirmation.visible, "%s clean retry must commit and close confirmation" % case.name)
+			_assert_true(subject.state.active_battle.is_empty(), "%s clean retry must install the retreat" % case.name)
+			_assert_equal(ended_events.size(), 1, "%s clean retry must emit battle_ended exactly once" % case.name)
+			subject.state = {}
+			_assert_true(subject.load_game(), "%s post-retry reload must install the committed result" % case.name)
+			var reloaded_battle: Variant = subject.state.get("active_battle", null)
+			_assert_true(reloaded_battle is Dictionary and (reloaded_battle as Dictionary).is_empty(), "%s post-retry reload must retain the retreat result" % case.name)
+		subject.set_process(false)
+		page.queue_free()
+		await process_frame
 
 func _test_ascension_layout_at_supported_resolutions() -> void:
 	_cleanup_slots()
@@ -484,6 +595,47 @@ func _print_case(name: String, before: int) -> void:
 		print("PASS %s" % name)
 	else:
 		print("FAIL %s failures=%d" % [name, failures.size() - before])
+
+func _assert_commit_outcome(owner: Node, expected: String, action: String) -> void:
+	_assert_true(owner.has_method("last_commit_outcome"), "%s must expose the explicit commit outcome" % action)
+	if owner.has_method("last_commit_outcome"):
+		_assert_equal(owner.last_commit_outcome(), expected, "%s must report %s" % [action, expected])
+
+func _committed_slot_fingerprint(owner: Node) -> Dictionary:
+	var global_paths: Array[String] = []
+	var path_set: Array[String] = []
+	for suffix in ["", owner.BACKUP_SUFFIX]:
+		var local_path: String = owner.DEFAULT_SAVE_PATH + suffix
+		if FileAccess.file_exists(local_path):
+			global_paths.append(ProjectSettings.globalize_path(local_path))
+			path_set.append(local_path.get_file())
+	path_set.sort()
+	if global_paths.is_empty():
+		return {"paths": path_set, "sha256": "", "stat": ""}
+	var sha_args := PackedStringArray(global_paths)
+	var stat_args := PackedStringArray(["-c", "%n|%s|%y"])
+	stat_args.append_array(PackedStringArray(global_paths))
+	var sha_output: Array = []
+	var stat_output: Array = []
+	var sha_status := OS.execute("sha256sum", sha_args, sha_output, true)
+	var stat_status := OS.execute("stat", stat_args, stat_output, true)
+	_assert_equal(sha_status, 0, "external SHA-256 fingerprint must succeed")
+	_assert_equal(stat_status, 0, "external nanosecond stat fingerprint must succeed")
+	return {
+		"paths": path_set,
+		"sha256": "".join(sha_output).strip_edges(),
+		"stat": "".join(stat_output).strip_edges(),
+	}
+
+func _assert_no_save_transients_for(owner: Node, action: String) -> void:
+	for suffix in [owner.SAVE_TEMP_SUFFIX, owner.BACKUP_TEMP_SUFFIX, owner.BACKUP_PREVIOUS_SUFFIX, owner.ROLLBACK_SUFFIX, owner.RECOVERY_SUFFIX, owner.BACKUP_SUFFIX + owner.RECOVERY_SUFFIX]:
+		_assert_false(FileAccess.file_exists(owner.DEFAULT_SAVE_PATH + suffix), "%s must clean scratch artifact %s" % [action, suffix])
+
+func _read_snapshot_json(path: String) -> Dictionary:
+	if not FileAccess.file_exists(path):
+		return {}
+	var parser := JSON.new()
+	return parser.data if parser.parse(FileAccess.get_file_as_string(path)) == OK and parser.data is Dictionary else {}
 
 func _cleanup_slots() -> void:
 	_cleanup_slots_for(session)
