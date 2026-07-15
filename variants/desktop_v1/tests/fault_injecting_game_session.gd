@@ -2,6 +2,7 @@ extends "res://scripts/core/game_session.gd"
 
 var failure_steps: Dictionary = {}
 var corruption_steps: Dictionary = {}
+var rollback_corruption_steps: Dictionary = {}
 var operation_trace: Array[String] = []
 var operation_phase_trace: Array[String] = []
 
@@ -11,9 +12,13 @@ func inject(callsite: String, phase: String = "*", count: int = 1) -> void:
 func corrupt_after(step: String, count: int = 1) -> void:
 	corruption_steps[step] = count
 
+func corrupt_rollback_after(step: String, count: int = 1) -> void:
+	rollback_corruption_steps[step] = count
+
 func clear_injections() -> void:
 	failure_steps.clear()
 	corruption_steps.clear()
+	rollback_corruption_steps.clear()
 	operation_trace.clear()
 	operation_phase_trace.clear()
 
@@ -43,7 +48,16 @@ func _fs_rename(source: String, destination: String, callsite: String) -> Error:
 		file.store_string("{fault-injected-corruption")
 		var write_error := file.get_error()
 		file.close()
-		return write_error
+		if write_error != OK:
+			return write_error
+	if error == OK and _should_corrupt_rollback(callsite):
+		var rollback_file := FileAccess.open(destination + ROLLBACK_SUFFIX, FileAccess.WRITE)
+		if rollback_file == null:
+			return FileAccess.get_open_error()
+		rollback_file.store_string("{fault-injected-rollback-corruption")
+		var rollback_error := rollback_file.get_error()
+		rollback_file.close()
+		return rollback_error
 	return error
 
 func _fs_path_status(path: String, callsite: String) -> Dictionary:
@@ -90,6 +104,14 @@ func _should_corrupt(callsite: String) -> bool:
 	if remaining <= 0:
 		return false
 	corruption_steps[callsite] = remaining - 1
+	return true
+
+func _should_corrupt_rollback(callsite: String) -> bool:
+	assert(callsite in PERSISTENCE_IO_CALLSITES, "test reached unnamed persistence callsite: %s" % callsite)
+	var remaining := int(rollback_corruption_steps.get(callsite, 0))
+	if remaining <= 0:
+		return false
+	rollback_corruption_steps[callsite] = remaining - 1
 	return true
 
 func _boundary_key(callsite: String, phase: String) -> String:
