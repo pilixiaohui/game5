@@ -32,8 +32,14 @@ var battle_text: Label
 var notice_band: PanelContainer
 var notice_label: Label
 var notice_timer: Timer
+var session: Node
+
+func _init(session_override: Node = null) -> void:
+	session = session_override
 
 func _ready() -> void:
+	if session == null:
+		session = get_node("/root/GameSession")
 	set_process_unhandled_input(true)
 	add_theme_constant_override("separation", 0)
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -43,9 +49,9 @@ func _ready() -> void:
 	_build_battle_strip()
 	_build_page_host()
 	_build_notice()
-	GameSession.state_changed.connect(_on_state_changed)
-	GameSession.notice_posted.connect(_show_notice)
-	_on_state_changed(GameSession.snapshot())
+	session.state_changed.connect(_on_state_changed)
+	session.notice_posted.connect(_show_notice)
+	_on_state_changed(session.snapshot())
 
 func _build_status_bar() -> void:
 	var bar := PanelContainer.new()
@@ -89,7 +95,7 @@ func _build_status_bar() -> void:
 		button.custom_minimum_size.x = 48
 		speed_group.add_child(button)
 		speed_buttons[speed] = button
-	row.add_child(UI.button("保存", GameSession.save_game))
+	row.add_child(UI.button("保存", session.save_game))
 
 func _build_navigation() -> void:
 	var band := ColorRect.new()
@@ -151,11 +157,11 @@ func _build_page_host() -> void:
 	pages = {
 		"hive": HivePage.new(),
 		"map": MapPage.new(),
-		"battle": BattlePage.new(),
+		"battle": BattlePage.new(session),
 		"evolution": EvolutionPage.new(),
 		"swarm": SwarmPage.new(),
 		"ascension": AscensionPage.new(),
-		"system": SystemPage.new(),
+		"system": SystemPage.new(session),
 	}
 	for id in pages.keys():
 		var page: Control = pages[id]
@@ -193,7 +199,7 @@ func _on_state_changed(snapshot: Dictionary) -> void:
 	for page in pages.values():
 		page.set_snapshot(snapshot)
 	_update_battle_strip(snapshot)
-	var completion := GameSession.completion_summary()
+	var completion: Dictionary = session.completion_summary()
 	var completion_label := find_child("CompletionLabel", true, false) as Label
 	if completion_label:
 		completion_label.text = "首版里程碑 %d / 14" % completion.completed
@@ -208,7 +214,7 @@ func _update_battle_strip(snapshot: Dictionary) -> void:
 		indicator.color = ThemeFactory.MUTED
 	else:
 		var battle: Dictionary = snapshot.active_battle
-		var node := GameSession.node_by_id(battle.node_id)
+		var node: Dictionary = session.node_by_id(battle.node_id)
 		battle_text.text = "%s  ·  敌军 %d  ·  结构 %d  ·  战损 %d" % [node.name, battle.enemy, battle.structure_hp, battle.losses]
 		battle_text.theme_type_variation = "Warning"
 		return_button.disabled = false
@@ -225,7 +231,7 @@ func _show_page(page_id: String) -> void:
 		nav_buttons[id].theme_type_variation = "NavActiveButton" if selected else "NavButton"
 
 func _set_speed(speed: int) -> void:
-	GameSession.set_speed(speed)
+	session.set_speed(speed)
 
 func _show_notice(message: String, level: String) -> void:
 	notice_label.text = message
@@ -238,7 +244,7 @@ func _hide_notice() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("save_game"):
-		GameSession.save_game()
+		session.save_game()
 		get_viewport().set_input_as_handled()
 	elif event.is_action_pressed("toggle_fullscreen"):
 		var mode := DisplayServer.window_get_mode()

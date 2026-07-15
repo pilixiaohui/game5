@@ -2,6 +2,7 @@ extends Node
 
 signal state_changed(snapshot: Dictionary)
 signal notice_posted(message: String, level: String)
+signal persistence_recovery_changed(status: Dictionary)
 signal battle_started(node_id: String)
 signal battle_ended(node_id: String, captured: bool)
 
@@ -51,22 +52,22 @@ const IO_RESTORE_PREVIOUS_BACKUP_DESTINATION := "restore_previous_backup_destina
 const IO_RESTORE_PREVIOUS_BACKUP_COMMIT := "restore_previous_backup_commit"
 const IO_VALIDATE_COMMITTED_BACKUP := "validate_committed_backup"
 const IO_REMOVE_STALE_ROLLBACK := "remove_stale_rollback"
-const IO_COPY_PRIMARY_TO_ROLLBACK := "copy_primary_to_rollback"
+const IO_MOVE_PRIMARY_TO_ROLLBACK := "move_primary_to_rollback"
 const IO_VALIDATE_ROLLBACK := "validate_rollback"
-const IO_INSPECT_PRIMARY_COMMIT_DESTINATION := "inspect_primary_commit_destination"
+const IO_INSPECT_VACATED_PRIMARY_DESTINATION := "inspect_vacated_primary_destination"
 const IO_COMMIT_PRIMARY := "commit_primary"
-const IO_RESTORE_PRIMARY_FROM_ROLLBACK_CLEANUP := "restore_primary_from_rollback_cleanup"
-const IO_RESTORE_PRIMARY_FROM_ROLLBACK_COPY := "restore_primary_from_rollback_copy"
-const IO_VALIDATE_RESTORE_PRIMARY_FROM_ROLLBACK := "validate_restore_primary_from_rollback"
-const IO_RESTORE_PRIMARY_FROM_ROLLBACK_DESTINATION := "restore_primary_from_rollback_destination"
-const IO_RESTORE_PRIMARY_FROM_ROLLBACK_COMMIT := "restore_primary_from_rollback_commit"
+const IO_INSPECT_ROLLBACK_RESTORE_SOURCE := "inspect_rollback_restore_source"
+const IO_VALIDATE_ROLLBACK_RESTORE_SOURCE := "validate_rollback_restore_source"
+const IO_INSPECT_ROLLBACK_RESTORE_DESTINATION := "inspect_rollback_restore_destination"
+const IO_RESTORE_PRIMARY_ROLLBACK_ENTRY := "restore_primary_rollback_entry"
+const IO_VALIDATE_RESTORED_PRIMARY_ROLLBACK := "validate_restored_primary_rollback"
 const IO_VALIDATE_COMMITTED_PRIMARY := "validate_committed_primary"
 const IO_REMOVE_INVALID_COMMITTED_SLOT := "remove_invalid_committed_slot"
-const IO_RESTORE_INVALID_PRIMARY_FROM_ROLLBACK_CLEANUP := "restore_invalid_primary_from_rollback_cleanup"
-const IO_RESTORE_INVALID_PRIMARY_FROM_ROLLBACK_COPY := "restore_invalid_primary_from_rollback_copy"
-const IO_VALIDATE_RESTORE_INVALID_PRIMARY := "validate_restore_invalid_primary"
-const IO_RESTORE_INVALID_PRIMARY_DESTINATION := "restore_invalid_primary_destination"
-const IO_RESTORE_INVALID_PRIMARY_COMMIT := "restore_invalid_primary_commit"
+const IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_CLEANUP := "restore_invalid_primary_from_backup_cleanup"
+const IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_COPY := "restore_invalid_primary_from_backup_copy"
+const IO_VALIDATE_RESTORE_INVALID_PRIMARY_FROM_BACKUP := "validate_restore_invalid_primary_from_backup"
+const IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_DESTINATION := "restore_invalid_primary_from_backup_destination"
+const IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_COMMIT := "restore_invalid_primary_from_backup_commit"
 const IO_CLEANUP_ROLLBACK := "cleanup_rollback"
 const IO_CLEANUP_BACKUP_PREVIOUS := "cleanup_backup_previous"
 const IO_REMOVE_STALE_RECOVERY := "remove_stale_recovery"
@@ -105,22 +106,22 @@ const PERSISTENCE_IO_CALLSITES: Array[String] = [
 	IO_RESTORE_PREVIOUS_BACKUP_COMMIT,
 	IO_VALIDATE_COMMITTED_BACKUP,
 	IO_REMOVE_STALE_ROLLBACK,
-	IO_COPY_PRIMARY_TO_ROLLBACK,
+	IO_MOVE_PRIMARY_TO_ROLLBACK,
 	IO_VALIDATE_ROLLBACK,
-	IO_INSPECT_PRIMARY_COMMIT_DESTINATION,
+	IO_INSPECT_VACATED_PRIMARY_DESTINATION,
 	IO_COMMIT_PRIMARY,
-	IO_RESTORE_PRIMARY_FROM_ROLLBACK_CLEANUP,
-	IO_RESTORE_PRIMARY_FROM_ROLLBACK_COPY,
-	IO_VALIDATE_RESTORE_PRIMARY_FROM_ROLLBACK,
-	IO_RESTORE_PRIMARY_FROM_ROLLBACK_DESTINATION,
-	IO_RESTORE_PRIMARY_FROM_ROLLBACK_COMMIT,
+	IO_INSPECT_ROLLBACK_RESTORE_SOURCE,
+	IO_VALIDATE_ROLLBACK_RESTORE_SOURCE,
+	IO_INSPECT_ROLLBACK_RESTORE_DESTINATION,
+	IO_RESTORE_PRIMARY_ROLLBACK_ENTRY,
+	IO_VALIDATE_RESTORED_PRIMARY_ROLLBACK,
 	IO_VALIDATE_COMMITTED_PRIMARY,
 	IO_REMOVE_INVALID_COMMITTED_SLOT,
-	IO_RESTORE_INVALID_PRIMARY_FROM_ROLLBACK_CLEANUP,
-	IO_RESTORE_INVALID_PRIMARY_FROM_ROLLBACK_COPY,
-	IO_VALIDATE_RESTORE_INVALID_PRIMARY,
-	IO_RESTORE_INVALID_PRIMARY_DESTINATION,
-	IO_RESTORE_INVALID_PRIMARY_COMMIT,
+	IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_CLEANUP,
+	IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_COPY,
+	IO_VALIDATE_RESTORE_INVALID_PRIMARY_FROM_BACKUP,
+	IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_DESTINATION,
+	IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_COMMIT,
 	IO_CLEANUP_ROLLBACK,
 	IO_CLEANUP_BACKUP_PREVIOUS,
 	IO_REMOVE_STALE_RECOVERY,
@@ -312,6 +313,7 @@ func new_game(seed_value: int = 0) -> void:
 	_mark("FH-UX-003")
 	_mark("FH-UX-004")
 	_emit_change()
+	_emit_persistence_recovery_changed()
 
 func _fresh_rooms() -> Array:
 	var rooms: Array = []
@@ -924,6 +926,7 @@ func load_game(path: String = DEFAULT_SAVE_PATH) -> bool:
 	if not cleanup.ok:
 		notice_posted.emit("存档已重新载入，但事务临时文件清理失败：%s" % cleanup.error, "warning")
 	_emit_change()
+	_emit_persistence_recovery_changed()
 	return true
 
 func _reconcile_backup_protection(path: String) -> bool:
@@ -970,6 +973,8 @@ func _commit_snapshot(path: String, snapshot: Dictionary) -> Dictionary:
 			return _not_committed_after_cleanup(path, backup_preparation.error)
 		var rollback_preparation := _prepare_primary_rollback(path)
 		if not rollback_preparation.ok:
+			if rollback_preparation.get("outcome", COMMIT_NOT_COMMITTED) == COMMIT_UNCERTAIN:
+				return rollback_preparation
 			return _not_committed_after_cleanup(path, rollback_preparation.error)
 		var primary_commit := _commit_primary(path)
 		if primary_commit.outcome == COMMIT_UNCERTAIN:
@@ -1057,35 +1062,62 @@ func _prepare_primary_rollback(path: String) -> Dictionary:
 	var cleanup_rollback := _remove_if_exists(rollback_path, IO_REMOVE_STALE_ROLLBACK)
 	if cleanup_rollback != OK:
 		return _commit_error("无法清理旧主槽回滚副本（%s）。" % cleanup_rollback)
-	var copy_rollback := _fs_copy(path, rollback_path, IO_COPY_PRIMARY_TO_ROLLBACK)
-	if copy_rollback != OK:
-		return _commit_error("无法建立主槽回滚副本（%s）。" % copy_rollback)
+	var move_rollback := _fs_rename(path, rollback_path, IO_MOVE_PRIMARY_TO_ROLLBACK)
+	if move_rollback != OK:
+		return _commit_error("无法原子保留旧主槽目录项（%s）。" % move_rollback)
 	var rollback_check := _read_snapshot(rollback_path, IO_VALIDATE_ROLLBACK)
 	if not rollback_check.ok:
-		return _commit_error("主槽回滚副本校验失败：%s。" % rollback_check.error)
+		var restore := _restore_primary_rollback_entry(path)
+		if restore.ok:
+			return _commit_error("旧主槽目录项校验失败（%s），已原子恢复。" % rollback_check.error)
+		return _commit_uncertain("旧主槽已移至回滚目录项，但校验与恢复均失败（%s/%s）；必须重新载入。" % [rollback_check.error, restore.error])
 	return {"ok": true, "error": ""}
 
 func _commit_primary(path: String) -> Dictionary:
 	var temp_path := path + SAVE_TEMP_SUFFIX
-	var rollback_path := path + ROLLBACK_SUFFIX
-	var destination := _fs_path_status(path, IO_INSPECT_PRIMARY_COMMIT_DESTINATION)
-	if destination.status != PATH_EXISTS:
-		return _commit_error("主槽提交点状态异常（%s），未执行提交。" % destination.error_code)
+	var destination := _fs_path_status(path, IO_INSPECT_VACATED_PRIMARY_DESTINATION)
+	if destination.status != SNAPSHOT_MISSING:
+		var destination_restore := _restore_primary_rollback_entry(path)
+		if destination_restore.ok:
+			return _commit_error("主槽提交点未保持空闲（%s），已恢复旧主槽。" % destination.error_code)
+		return _commit_uncertain("主槽提交点状态异常且旧主槽无法恢复（%s/%s）；必须重新载入。" % [destination.error_code, destination_restore.error])
 	var commit_primary := _fs_rename(temp_path, path, IO_COMMIT_PRIMARY)
 	if commit_primary != OK:
-		return _commit_error("主槽原子提交失败（%s）；已承诺主备槽未被触碰。" % commit_primary)
+		var failed_commit_restore := _restore_primary_rollback_entry(path)
+		if failed_commit_restore.ok:
+			return _commit_error("主槽原子提交失败（%s），已恢复原目录项。" % commit_primary)
+		return _commit_uncertain("主槽提交失败且旧目录项无法恢复（%s/%s）；必须重新载入。" % [commit_primary, failed_commit_restore.error])
 	var committed_primary := _read_snapshot(path, IO_VALIDATE_COMMITTED_PRIMARY)
 	if committed_primary.status == SNAPSHOT_IO_ERROR:
 		return _commit_uncertain("新主槽提交后读取发生 I/O 错误：%s；结果必须由重新载入决定。" % committed_primary.error)
 	if not committed_primary.ok:
-		var rollback := _restore_copy(rollback_path, path, IO_RESTORE_PRIMARY_FROM_ROLLBACK_CLEANUP, IO_RESTORE_PRIMARY_FROM_ROLLBACK_COPY, IO_VALIDATE_RESTORE_PRIMARY_FROM_ROLLBACK, IO_RESTORE_PRIMARY_FROM_ROLLBACK_DESTINATION, IO_RESTORE_PRIMARY_FROM_ROLLBACK_COMMIT)
-		if rollback == OK:
+		var rollback := _restore_primary_rollback_entry(path)
+		if rollback.ok:
 			return _commit_error("新主槽校验失败，已原子恢复提交前主槽。")
-		var backup_fallback := _restore_copy(path + BACKUP_SUFFIX, path, IO_RESTORE_INVALID_PRIMARY_FROM_ROLLBACK_CLEANUP, IO_RESTORE_INVALID_PRIMARY_FROM_ROLLBACK_COPY, IO_VALIDATE_RESTORE_INVALID_PRIMARY, IO_RESTORE_INVALID_PRIMARY_DESTINATION, IO_RESTORE_INVALID_PRIMARY_COMMIT)
+		var backup_fallback := _restore_copy(path + BACKUP_SUFFIX, path, IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_CLEANUP, IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_COPY, IO_VALIDATE_RESTORE_INVALID_PRIMARY_FROM_BACKUP, IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_DESTINATION, IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_COMMIT)
 		if backup_fallback == OK:
-			return _commit_error("新主槽校验失败，已从有效备份恢复旧代。")
-		return _commit_uncertain("新主槽损坏，主槽回滚与备份恢复均失败（%s/%s）；必须重新载入。" % [rollback, backup_fallback])
+			return _commit_uncertain("新主槽校验失败；原目录项恢复无法确认（%s），已恢复可加载备份，但权威状态仍须重新载入。" % rollback.error)
+		return _commit_uncertain("新主槽损坏，主槽回滚与备份恢复均失败（%s/%s）；必须重新载入。" % [rollback.error, backup_fallback])
 	return _commit_success()
+
+func _restore_primary_rollback_entry(path: String) -> Dictionary:
+	var rollback_path := path + ROLLBACK_SUFFIX
+	var source := _fs_path_status(rollback_path, IO_INSPECT_ROLLBACK_RESTORE_SOURCE)
+	if source.status != PATH_EXISTS:
+		return _commit_error("旧主槽回滚目录项不可确认（%s）。" % source.error_code)
+	var source_snapshot := _read_snapshot(rollback_path, IO_VALIDATE_ROLLBACK_RESTORE_SOURCE)
+	if not source_snapshot.ok:
+		return _commit_error("旧主槽回滚目录项不可验证：%s。" % source_snapshot.error)
+	var destination := _fs_path_status(path, IO_INSPECT_ROLLBACK_RESTORE_DESTINATION)
+	if destination.status == SNAPSHOT_IO_ERROR:
+		return _commit_error("主槽恢复目标状态不可确认（%s）。" % destination.error_code)
+	var restore := _fs_rename(rollback_path, path, IO_RESTORE_PRIMARY_ROLLBACK_ENTRY)
+	if restore != OK:
+		return _commit_error("旧主槽目录项原子恢复失败（%s）。" % restore)
+	var restored := _read_snapshot(path, IO_VALIDATE_RESTORED_PRIMARY_ROLLBACK)
+	if not restored.ok:
+		return _commit_error("原子恢复后的旧主槽无法验证：%s。" % restored.error)
+	return {"ok": true, "error": ""}
 
 func _restore_backup(path: String, primary_status: String) -> Dictionary:
 	var backup_path := path + BACKUP_SUFFIX
@@ -1284,6 +1316,17 @@ func last_commit_outcome() -> String:
 func last_load_error() -> String:
 	return _last_load_error
 
+func persistence_recovery_status() -> Dictionary:
+	return {
+		"blocked": _persistence_blocked,
+		"reload_required": _reload_required,
+		"message": _last_load_error,
+		"commit_outcome": _last_commit_outcome,
+	}
+
+func _emit_persistence_recovery_changed() -> void:
+	persistence_recovery_changed.emit(persistence_recovery_status())
+
 func _fail_persistence(message: String, requires_reload: bool = false) -> bool:
 	_persistence_blocked = true
 	_reload_required = _reload_required or requires_reload
@@ -1291,6 +1334,7 @@ func _fail_persistence(message: String, requires_reload: bool = false) -> bool:
 	_accumulator = 0.0
 	_autosave_elapsed = 0.0
 	notice_posted.emit(message, "warning")
+	_emit_persistence_recovery_changed()
 	return false
 
 func _reject_if_persistence_blocked() -> bool:

@@ -5,8 +5,14 @@ const UI = preload("res://scripts/ui/ui_utils.gd")
 var snapshot: Dictionary = {}
 var log_box: VBoxContainer
 var setting_box: VBoxContainer
+var session: Node
+
+func _init(session_override: Node = null) -> void:
+	session = session_override
 
 func _ready() -> void:
+	if session == null:
+		session = get_node("/root/GameSession")
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
 	split_offset = -390
@@ -87,22 +93,22 @@ func _rebuild_settings() -> void:
 	volume.value_changed.connect(_set_volume)
 	setting_box.add_child(volume)
 	setting_box.add_child(UI.separator())
-	var completion := GameSession.completion_summary()
+	var completion: Dictionary = session.completion_summary()
 	setting_box.add_child(UI.label("体验里程碑 %d / %d" % [completion.completed, completion.total], "Section"))
 	setting_box.add_child(UI.progress(float(completion.completed), float(completion.total)))
 	setting_box.add_child(UI.label("正式飞升、多虫巢、第二地区节点网：尚未开放", "Warning"))
 
 func _save() -> void:
-	GameSession.save_game()
+	session.save_game()
 
 func _set_scale(index: int) -> void:
-	GameSession.update_settings({"ui_scale": [1.0, 1.15, 1.3][index]})
+	session.update_settings({"ui_scale": [1.0, 1.15, 1.3][index]})
 
 func _set_animation(index: int) -> void:
-	GameSession.update_settings({"animation": ["完整", "降低", "最低"][index]})
+	session.update_settings({"animation": ["完整", "降低", "最低"][index]})
 
 func _set_flashes(value: bool) -> void:
-	GameSession.update_settings({"reduce_flashes": value})
+	session.update_settings({"reduce_flashes": value})
 
 func _set_volume(value: float) -> void:
-	GameSession.update_settings({"master_volume": value})
+	session.update_settings({"master_volume": value})

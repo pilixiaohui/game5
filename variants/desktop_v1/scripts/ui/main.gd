@@ -12,20 +12,33 @@ var settings_overlay: Control
 var new_game_confirmation: Control
 var title_notice: Label
 var background_focus_modes: Dictionary = {}
+var session: Node
+var persistence_recovery: PanelContainer
+var persistence_recovery_label: Label
+var persistence_reload_button: Button
+var showing_game := false
+
+func _init(session_override: Node = null) -> void:
+	session = session_override
 
 func _ready() -> void:
+	if session == null:
+		session = get_node("/root/GameSession")
 	theme = ThemeFactory.build()
 	set_process_unhandled_input(true)
 	get_viewport().gui_focus_changed.connect(_on_gui_focus_changed)
 	_build_background()
-	if not GameSession.notice_posted.is_connected(_show_title_notice):
-		GameSession.notice_posted.connect(_show_title_notice)
+	if not session.notice_posted.is_connected(_show_title_notice):
+		session.notice_posted.connect(_show_title_notice)
+	if not session.persistence_recovery_changed.is_connected(_on_persistence_recovery_changed):
+		session.persistence_recovery_changed.connect(_on_persistence_recovery_changed)
+	_on_persistence_recovery_changed(session.persistence_recovery_status())
 	if "--demo" in OS.get_cmdline_user_args():
-		GameSession.new_game(2707)
-		GameSession.build_room(0, "thermal_metabolism")
-		GameSession.build_room(1, "biomass_filter")
-		GameSession.build_room(4, "embryo_hatchery")
-		GameSession.advance_steps(22)
+		session.new_game(2707)
+		session.build_room(0, "thermal_metabolism")
+		session.build_room(1, "biomass_filter")
+		session.build_room(4, "embryo_hatchery")
+		session.advance_steps(22)
 		_show_game()
 	else:
 		_show_title()
@@ -43,13 +56,42 @@ func _build_background() -> void:
 	content.add_theme_constant_override("margin_top", 20)
 	content.add_theme_constant_override("margin_bottom", 20)
 	add_child(content)
+	_build_persistence_recovery()
+
+func _build_persistence_recovery() -> void:
+	persistence_recovery = PanelContainer.new()
+	persistence_recovery.name = "PersistenceRecovery"
+	persistence_recovery.visible = false
+	persistence_recovery.z_index = 100
+	persistence_recovery.mouse_filter = Control.MOUSE_FILTER_STOP
+	persistence_recovery.anchor_left = 0.0
+	persistence_recovery.anchor_top = 1.0
+	persistence_recovery.anchor_right = 1.0
+	persistence_recovery.anchor_bottom = 1.0
+	persistence_recovery.offset_left = 24.0
+	persistence_recovery.offset_top = -72.0
+	persistence_recovery.offset_right = -24.0
+	persistence_recovery.offset_bottom = -14.0
+	add_child(persistence_recovery)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	persistence_recovery.add_child(row)
+	persistence_recovery_label = UI.label("存档提交结果待确认。模拟、保存与操作已冻结，必须重新载入。", "Warning")
+	persistence_recovery_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	persistence_recovery_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	row.add_child(persistence_recovery_label)
+	persistence_reload_button = UI.button("重新载入存档", _reload_after_persistence_block, "PrimaryButton")
+	persistence_reload_button.name = "ReloadAfterPersistenceBlock"
+	persistence_reload_button.custom_minimum_size.x = 150
+	row.add_child(persistence_reload_button)
 
 func _show_title() -> void:
+	showing_game = false
 	UI.clear(content)
 	content.add_theme_constant_override("margin_left", 24)
 	content.add_theme_constant_override("margin_right", 24)
 	content.add_theme_constant_override("margin_top", 20)
-	content.add_theme_constant_override("margin_bottom", 20)
+	content.add_theme_constant_override("margin_bottom", 84 if session.is_reload_required() else 20)
 	var root := HBoxContainer.new()
 	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -91,7 +133,7 @@ func _show_title() -> void:
 	actions.add_child(new_game_button)
 	continue_button = UI.button("继续游戏", _continue_game)
 	continue_button.name = "ContinueButton"
-	continue_button.disabled = not GameSession.has_save()
+	continue_button.disabled = not session.has_save()
 	actions.add_child(continue_button)
 	actions.add_child(UI.button("设置", _toggle_title_settings))
 	actions.add_child(UI.button("退出", get_tree().quit))
@@ -163,7 +205,7 @@ func _build_new_game_confirmation() -> void:
 	cancel.focus_previous = cancel.get_path_to(confirm)
 
 func _new_game() -> void:
-	if GameSession.has_save():
+	if session.has_save():
 		_set_background_focus_enabled(false)
 		new_game_confirmation.visible = true
 		_focus_new_game_modal()
@@ -212,12 +254,12 @@ func _on_gui_focus_changed(control: Control) -> void:
 		call_deferred("_focus_new_game_modal")
 
 func _start_new_game() -> void:
-	GameSession.new_game()
-	if GameSession.save_game():
+	session.new_game()
+	if session.save_game():
 		_show_game()
 
 func _continue_game() -> void:
-	if GameSession.load_game():
+	if session.load_game():
 		_show_game()
 
 func _show_title_notice(message: String, level: String) -> void:
@@ -228,15 +270,43 @@ func _show_title_notice(message: String, level: String) -> void:
 	title_notice.visible = true
 
 func _show_game() -> void:
+	showing_game = true
 	if is_instance_valid(new_game_confirmation):
 		_close_new_game_confirmation(false)
 	UI.clear(content)
 	content.add_theme_constant_override("margin_left", 0)
 	content.add_theme_constant_override("margin_right", 0)
 	content.add_theme_constant_override("margin_top", 0)
-	content.add_theme_constant_override("margin_bottom", 0)
-	var shell := GameShell.new()
+	content.add_theme_constant_override("margin_bottom", 72 if session.is_reload_required() else 0)
+	var shell := GameShell.new(session)
 	content.add_child(shell)
+
+func _on_persistence_recovery_changed(status: Dictionary) -> void:
+	if not is_instance_valid(persistence_recovery):
+		return
+	var visible: bool = bool(status.get("reload_required", false))
+	persistence_recovery.visible = visible
+	persistence_reload_button.disabled = false
+	persistence_recovery_label.tooltip_text = String(status.get("message", ""))
+	content.add_theme_constant_override("margin_bottom", 72 if visible and showing_game else 84 if visible else 0 if showing_game else 20)
+	if visible:
+		call_deferred("_focus_persistence_recovery")
+
+func _focus_persistence_recovery() -> void:
+	if is_instance_valid(persistence_reload_button) and persistence_reload_button.is_visible_in_tree() and not persistence_reload_button.disabled:
+		persistence_reload_button.grab_focus()
+
+func _reload_after_persistence_block() -> void:
+	if not session.is_reload_required():
+		return
+	var was_showing_game := showing_game
+	persistence_reload_button.disabled = true
+	if session.load_game():
+		if not was_showing_game:
+			_show_game()
+		return
+	persistence_reload_button.disabled = false
+	_focus_persistence_recovery()
 
 func _toggle_title_settings() -> void:
 	settings_overlay.visible = not settings_overlay.visible

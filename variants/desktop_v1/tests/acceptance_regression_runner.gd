@@ -35,15 +35,18 @@ func _run() -> void:
 	before = failures.size()
 	await _test_ascension_layout_at_supported_resolutions()
 	_print_case("ACC-A11Y-001/002 ascension layout and text remain readable", before)
+	before = failures.size()
+	await _test_global_persistence_recovery_entrypoints()
+	_print_case("ACC-SAVE-005 uncertain saves expose one global reload entry", before)
 
 	_cleanup_slots()
 	if failures.is_empty():
-		print("ACCEPTANCE_REGRESSIONS_OK cases=4 resolutions=3 assertions=%d" % assertions)
+		print("ACCEPTANCE_REGRESSIONS_OK cases=5 resolutions=3 assertions=%d" % assertions)
 		quit(0)
 	else:
 		for failure in failures:
 			push_error(failure)
-		print("ACCEPTANCE_REGRESSIONS_FAILED cases=4 resolutions=3 assertions=%d failures=%d" % [assertions, failures.size()])
+		print("ACCEPTANCE_REGRESSIONS_FAILED cases=5 resolutions=3 assertions=%d failures=%d" % [assertions, failures.size()])
 		quit(1)
 
 func _test_new_game_modal_cancel_and_escape() -> void:
@@ -255,21 +258,29 @@ func _test_post_commit_retreat_outcomes(subject: Node, ended_events: Array) -> v
 		var state_before := JSON.stringify(subject.snapshot())
 		var primary_before := FileAccess.get_file_as_bytes(subject.DEFAULT_SAVE_PATH)
 		var backup_before := FileAccess.get_file_as_bytes(subject.DEFAULT_SAVE_PATH + subject.BACKUP_SUFFIX)
+		var committed_before := _committed_slot_fingerprint(subject)
 		subject.clear_injections()
 		if case.get("corrupt", false):
 			subject.corrupt_after(case.boundary)
 		else:
 			subject.inject(case.boundary, case.phase)
-		var page := BattlePage.new(subject)
-		root.add_child(page)
-		page.set_snapshot(subject.snapshot())
+		var main := _instantiate_main_for(subject)
+		root.add_child(main)
 		await _settle()
-		var retreat_button := page.find_child("RetreatButton", true, false) as Button
-		var confirm_button := page.find_child("ConfirmRetreatButton", true, false) as Button
-		var confirmation := page.find_child("RetreatConfirmation", true, false) as Control
+		main.call("_show_game")
+		await _settle()
+		var shell := _find_shell(main)
+		if shell != null:
+			shell.call("_show_page", "battle")
+			await _settle()
+		var page := shell.get("pages").get("battle") as Control if shell != null else null
+		await _settle()
+		var retreat_button := page.find_child("RetreatButton", true, false) as Button if page != null else null
+		var confirm_button := page.find_child("ConfirmRetreatButton", true, false) as Button if page != null else null
+		var confirmation := page.find_child("RetreatConfirmation", true, false) as Control if page != null else null
 		_assert_true(retreat_button != null and confirm_button != null and confirmation != null, "%s must expose production retreat controls" % case.name)
 		if retreat_button == null or confirm_button == null or confirmation == null:
-			page.queue_free()
+			main.queue_free()
 			await process_frame
 			continue
 		subject.set_process(true)
@@ -282,8 +293,8 @@ func _test_post_commit_retreat_outcomes(subject: Node, ended_events: Array) -> v
 		if case.outcome == "uncertain":
 			_assert_true(subject.is_persistence_blocked(), "%s must enter persistence-blocked state" % case.name)
 			_assert_true(not confirmation.visible, "%s must close the retry confirmation after the commit point" % case.name)
-			var blocked_band := page.find_child("PersistenceBlocked", true, false) as Control
-			var reload_button := page.find_child("ReloadAfterPersistenceBlock", true, false) as Button
+			var blocked_band := main.find_child("PersistenceRecovery", true, false) as Control
+			var reload_button := main.find_child("ReloadAfterPersistenceBlock", true, false) as Button
 			_assert_true(blocked_band != null and blocked_band.visible, "%s must show a player-visible persistence-blocked state" % case.name)
 			_assert_true(reload_button != null and reload_button.visible, "%s must expose reload as the only recovery command" % case.name)
 			await _wait_frames(12)
@@ -312,6 +323,7 @@ func _test_post_commit_retreat_outcomes(subject: Node, ended_events: Array) -> v
 		else:
 			_assert_false(subject.is_persistence_blocked(), "%s known rollback must remain retryable" % case.name)
 			_assert_true(confirmation.visible, "%s known rollback must retain the retry confirmation" % case.name)
+			_assert_equal(_committed_slot_fingerprint(subject), committed_before, "%s not-committed rollback must preserve path/hash/size/nanosecond mtime" % case.name)
 			_assert_equal(FileAccess.get_file_as_bytes(subject.DEFAULT_SAVE_PATH + subject.BACKUP_SUFFIX), backup_before, "%s known rollback must preserve backup bytes" % case.name)
 			if case.existing:
 				_assert_equal(FileAccess.get_file_as_bytes(subject.DEFAULT_SAVE_PATH), primary_before, "%s must restore the prior primary generation" % case.name)
@@ -333,8 +345,115 @@ func _test_post_commit_retreat_outcomes(subject: Node, ended_events: Array) -> v
 			var reloaded_battle: Variant = subject.state.get("active_battle", null)
 			_assert_true(reloaded_battle is Dictionary and (reloaded_battle as Dictionary).is_empty(), "%s post-retry reload must retain the retreat result" % case.name)
 		subject.set_process(false)
-		page.queue_free()
+		main.queue_free()
 		await process_frame
+
+func _test_global_persistence_recovery_entrypoints() -> void:
+	var subject := FaultSession.new()
+	subject.name = "GlobalRecoveryFaultSession"
+	root.add_child(subject)
+	subject.set_process(false)
+	_assert_true(subject.has_signal("persistence_recovery_changed"), "GameSession must expose an explicit persistence recovery state signal")
+
+	await _exercise_uncertain_save_entry(subject, "Ctrl+S", func(main: Control) -> void:
+		await _press_save_shortcut()
+	, true)
+	await _exercise_uncertain_save_entry(subject, "system page save", func(main: Control) -> void:
+		var shell := _find_shell(main)
+		if shell != null:
+			shell.call("_show_page", "system")
+			await _settle()
+		var save_button := _find_button_by_text(main, "手动保存")
+		_assert_true(save_button != null, "system page must expose its production save command")
+		if save_button != null:
+			await _click_same_frame(save_button)
+	)
+	await _exercise_uncertain_save_entry(subject, "scheduler autosave", func(main: Control) -> void:
+		subject.set("_autosave_elapsed", 29.99)
+		subject.set_process(true)
+		await _wait_frames(5)
+		subject.set_process(false)
+	)
+
+	_cleanup_slots_for(subject)
+	subject.state = {}
+	subject.clear_injections()
+	subject.inject("validate_first_primary", "open")
+	var title_main := _instantiate_main_for(subject)
+	root.add_child(title_main)
+	await _settle()
+	var new_game := title_main.find_child("NewGameButton", true, false) as Button
+	_assert_true(new_game != null, "first-save fixture must expose the production new-game command")
+	if new_game != null:
+		await _click_same_frame(new_game)
+	_assert_true("validate_first_primary.open" in subject.operation_phase_trace, "first new game must reach the injected post-commit open boundary")
+	if not subject.is_reload_required():
+		subject.new_game(8699)
+		subject.save_game()
+	await _assert_and_resolve_global_recovery(title_main, subject, "first new game save")
+	_assert_true(_find_shell(title_main) != null, "successful first-save reload must enter the game using disk authority")
+	title_main.queue_free()
+	await process_frame
+	subject.set_process(false)
+	subject.queue_free()
+	await process_frame
+
+func _exercise_uncertain_save_entry(subject: Node, action_name: String, trigger: Callable, verify_retry_focus: bool = false) -> void:
+	_cleanup_slots_for(subject)
+	subject.clear_injections()
+	subject.new_game(8600 + assertions)
+	subject.advance_steps(2)
+	_assert_true(subject.save_game(), "%s fixture must create a primary" % action_name)
+	subject.advance_steps(2)
+	_assert_true(subject.save_game(), "%s fixture must create a backup" % action_name)
+	subject.advance_steps(1)
+	var main := _instantiate_main_for(subject)
+	root.add_child(main)
+	await _settle()
+	main.call("_show_game")
+	await _settle()
+	subject.clear_injections()
+	subject.inject("validate_committed_primary", "open")
+	await trigger.call(main)
+	_assert_true("validate_committed_primary.open" in subject.operation_phase_trace, "%s must reach the injected post-commit open boundary" % action_name)
+	if not subject.is_reload_required():
+		subject.save_game()
+	await _assert_and_resolve_global_recovery(main, subject, action_name, verify_retry_focus)
+	main.queue_free()
+	await process_frame
+
+func _assert_and_resolve_global_recovery(main: Control, subject: Node, action_name: String, verify_retry_focus: bool = false) -> void:
+	var recovery_band := main.find_child("PersistenceRecovery", true, false) as Control
+	var reload_buttons := main.find_children("ReloadAfterPersistenceBlock", "Button", true, false)
+	var reload_button := reload_buttons[0] as Button if reload_buttons.size() == 1 else null
+	_assert_commit_outcome(subject, "uncertain", action_name)
+	_assert_true(subject.is_reload_required(), "%s must require authoritative reload" % action_name)
+	_assert_equal(reload_buttons.size(), 1, "%s must expose exactly one reload command" % action_name)
+	_assert_true(recovery_band != null and recovery_band.is_visible_in_tree(), "%s must show the global recovery state on the current page" % action_name)
+	_assert_true(reload_button != null and reload_button.is_visible_in_tree(), "%s reload command must be visible and reachable" % action_name)
+	if verify_retry_focus and reload_button != null and reload_button.is_visible_in_tree():
+		subject.clear_injections()
+		subject.inject("load_primary", "open")
+		await _click_same_frame(reload_button)
+		_assert_true(subject.is_reload_required(), "%s failed reload must remain retryable" % action_name)
+		_assert_true(recovery_band.is_visible_in_tree(), "%s failed reload must keep recovery visible" % action_name)
+		_assert_true(not reload_button.disabled and root.gui_get_focus_owner() == reload_button, "%s failed reload must restore focus to the enabled reload command" % action_name)
+	subject.clear_injections()
+	if reload_button != null and reload_button.is_visible_in_tree():
+		await _click_same_frame(reload_button)
+	else:
+		_assert_true(subject.load_game(), "%s fallback reload must restore disk authority" % action_name)
+	_assert_true(not subject.is_persistence_blocked() and not subject.is_reload_required(), "%s successful reload must clear the global freeze" % action_name)
+	if recovery_band != null:
+		_assert_true(not recovery_band.visible, "%s successful reload must hide the global recovery state" % action_name)
+
+func _instantiate_main_for(subject: Node) -> Control:
+	var main := load("res://scenes/main.tscn").instantiate() as Control
+	for property in main.get_property_list():
+		if String(property.name) == "session":
+			main.set("session", subject)
+			break
+	return main
 
 func _test_ascension_layout_at_supported_resolutions() -> void:
 	_cleanup_slots()
@@ -500,6 +619,21 @@ func _press_key(keycode: Key, shift_pressed: bool = false) -> void:
 	up.keycode = keycode
 	up.physical_keycode = keycode
 	up.shift_pressed = shift_pressed
+	up.pressed = false
+	root.push_input(up)
+	await _settle()
+
+func _press_save_shortcut() -> void:
+	var down := InputEventKey.new()
+	down.keycode = KEY_S
+	down.physical_keycode = KEY_S
+	down.ctrl_pressed = true
+	down.pressed = true
+	root.push_input(down)
+	var up := InputEventKey.new()
+	up.keycode = KEY_S
+	up.physical_keycode = KEY_S
+	up.ctrl_pressed = true
 	up.pressed = false
 	root.push_input(up)
 	await _settle()

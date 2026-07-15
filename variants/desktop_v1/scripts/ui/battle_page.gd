@@ -10,8 +10,6 @@ var title: Label
 var metrics: Label
 var retreat_button: Button
 var confirm_band: PanelContainer
-var blocked_band: PanelContainer
-var reload_button: Button
 var session: Node
 
 func _init(session_override: Node = null) -> void:
@@ -57,19 +55,6 @@ func _ready() -> void:
 	var confirm_button := UI.button("确认撤离", _confirm_retreat, "DangerButton")
 	confirm_button.name = "ConfirmRetreatButton"
 	confirm_row.add_child(confirm_button)
-	blocked_band = PanelContainer.new()
-	blocked_band.name = "PersistenceBlocked"
-	blocked_band.visible = false
-	add_child(blocked_band)
-	var blocked_row := HBoxContainer.new()
-	blocked_band.add_child(blocked_row)
-	var blocked_warning := UI.label("存档提交结果待确认。模拟、保存与操作已冻结，请重新载入存档。", "Warning")
-	blocked_warning.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	blocked_row.add_child(blocked_warning)
-	reload_button = UI.button("重新载入存档", _reload_after_persistence_block, "PrimaryButton")
-	reload_button.name = "ReloadAfterPersistenceBlock"
-	blocked_row.add_child(reload_button)
-
 func set_snapshot(value: Dictionary) -> void:
 	snapshot = value
 	if snapshot.is_empty():
@@ -77,7 +62,6 @@ func set_snapshot(value: Dictionary) -> void:
 	var battle: Dictionary = snapshot.active_battle
 	canvas.set_battle(battle)
 	var persistence_blocked: bool = session.is_reload_required()
-	blocked_band.visible = persistence_blocked
 	retreat_button.disabled = battle.is_empty() or persistence_blocked
 	if persistence_blocked and confirm_band.visible:
 		_hide_retreat_confirm(false)
@@ -110,21 +94,11 @@ func _confirm_retreat() -> void:
 		_hide_retreat_confirm()
 	elif session.is_reload_required():
 		_hide_retreat_confirm(false)
-		blocked_band.visible = true
 		retreat_button.disabled = true
-		reload_button.grab_focus()
 	else:
 		var confirm := confirm_band.find_child("ConfirmRetreatButton", true, false) as Button
 		if confirm:
 			confirm.grab_focus()
-
-func _reload_after_persistence_block() -> void:
-	if not session.is_reload_required():
-		return
-	if session.load_game():
-		set_snapshot(session.snapshot())
-		if not retreat_button.disabled and retreat_button.is_visible_in_tree():
-			retreat_button.grab_focus()
 
 func _on_visibility_changed() -> void:
 	if not is_visible_in_tree() and is_instance_valid(confirm_band) and confirm_band.visible:
