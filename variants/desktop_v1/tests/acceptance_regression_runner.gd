@@ -249,15 +249,42 @@ func _test_ascension_layout_at_supported_resolutions() -> void:
 	await _settle()
 	_assert_equal(String(ProjectSettings.get_setting("display/window/stretch/mode")), "disabled", "desktop UI must use one-to-one logical pixels at supported windows")
 	var points_text := str(session.ascension_preview().points)
+	var availability := _find_label_by_text(main, "尚未开放")
+	var page_title := _find_label_by_text(main, "飞升只读预览")
+	var return_button := _find_button_by_text(main, "返回进化")
+	var ascension_page := page_title.get_parent().get_parent() as Control if page_title != null else null
+	var scroll := _find_scroll_container(ascension_page)
+	var longest_label := _find_longest_label(scroll)
+	_assert_true(availability != null and page_title != null, "ascension header must expose title and availability status")
+	_assert_true(scroll != null and longest_label != null, "ascension body must expose a scroll viewport and rendered copy")
 	for resolution in [Vector2i(1280, 720), Vector2i(1600, 900), Vector2i(1920, 1080)]:
 		root.size = resolution
-		await _settle()
+		await _settle_rendered()
+		var texture := root.get_texture()
+		var image: Image = texture.get_image() if texture != null else null
 		var point_label := _find_label_by_text(main, points_text)
 		var body_label := _find_label_containing(main, "购买后")
-		var return_button := _find_button_by_text(main, "返回进化")
+		var viewport_rect := Rect2(Vector2.ZERO, Vector2(resolution))
+		_assert_true(image != null and image.get_size() == resolution, "%s must produce a real rendered frame" % resolution)
 		_assert_true(point_label != null and point_label.is_visible_in_tree(), "%s point total must be visible" % resolution)
 		_assert_true(body_label != null and body_label.is_visible_in_tree(), "%s ascension body copy must be visible" % resolution)
 		_assert_true(return_button != null and return_button.is_visible_in_tree(), "%s ascension return command must remain reachable" % resolution)
+		if return_button != null:
+			_assert_true(viewport_rect.encloses(return_button.get_global_rect()), "%s return command rect must be fully inside the viewport, got %s" % [resolution, return_button.get_global_rect()])
+			_assert_true(not return_button.disabled and return_button.focus_mode == Control.FOCUS_ALL, "%s return command must remain enabled and keyboard reachable" % resolution)
+		if availability != null:
+			var availability_rect := availability.get_global_rect()
+			_assert_true(viewport_rect.encloses(availability_rect), "%s availability rect must be fully inside the viewport, got %s" % [resolution, availability_rect])
+			_assert_true(availability_rect.size.x >= 80.0 and availability_rect.size.y <= 36.0, "%s availability must remain a horizontal header field, got %s" % [resolution, availability_rect.size])
+			_assert_equal(availability.get_line_count(), 1, "%s availability must render on one actual line" % resolution)
+			_assert_equal(availability.get_visible_line_count(), availability.get_line_count(), "%s availability must not hide rendered lines" % resolution)
+			_assert_false(availability.clip_text, "%s availability must not clip text" % resolution)
+			if image != null:
+				var availability_pixels := _count_text_pixels(image, availability_rect)
+				_assert_true(availability_pixels >= 12, "%s availability rect must contain rendered text pixels, got %d" % [resolution, availability_pixels])
+		if page_title != null:
+			_assert_equal(page_title.get_line_count(), 1, "%s page title must remain one rendered line" % resolution)
+			_assert_true(page_title.get_global_rect().size.x >= 180.0, "%s page title must retain a readable horizontal rect" % resolution)
 		if point_label != null:
 			_assert_equal(point_label.autowrap_mode, TextServer.AUTOWRAP_OFF, "%s fixed-format point total must not wrap" % resolution)
 			_assert_true(point_label.size.x >= 96.0 and point_label.size.y <= 60.0, "%s point total must remain a horizontal stable field, got %s" % [resolution, point_label.size])
@@ -265,6 +292,24 @@ func _test_ascension_layout_at_supported_resolutions() -> void:
 			_assert_true(body_label.get_theme_font_size("font_size") >= 16, "%s body text must be at least 16 logical pixels" % resolution)
 		if return_button != null:
 			_assert_true(return_button.get_theme_font_size("font_size") >= 16, "%s primary controls must be at least 16 logical pixels" % resolution)
+		if scroll != null and longest_label != null:
+			scroll.scroll_vertical = 1000000
+			await _settle_rendered()
+			texture = root.get_texture()
+			image = texture.get_image() if texture != null else null
+			var longest_rect := longest_label.get_global_rect()
+			var visible_scroll_rect := scroll.get_global_rect().intersection(viewport_rect)
+			_assert_true(visible_scroll_rect.encloses(longest_rect), "%s longest body text must be reachable in the visible scroll viewport, visible=%s text=%s" % [resolution, visible_scroll_rect, longest_rect])
+			_assert_true(longest_rect.size.x >= 240.0 and longest_rect.size.y >= 16.0, "%s longest body text must retain a readable rect, got %s" % [resolution, longest_rect.size])
+			_assert_true(longest_label.get_line_count() <= 3, "%s longest body text must use at most three actual lines, got %d" % [resolution, longest_label.get_line_count()])
+			_assert_equal(longest_label.get_visible_line_count(), longest_label.get_line_count(), "%s longest body text must expose every rendered line" % resolution)
+			_assert_false(longest_label.clip_text, "%s longest body text must not clip" % resolution)
+			var longest_pixels := -1
+			if image != null:
+				longest_pixels = _count_text_pixels(image, longest_rect)
+				_assert_true(longest_pixels >= 24, "%s longest body rect must contain rendered text pixels, got %d" % [resolution, longest_pixels])
+			print("ASCENSION_RENDER size=%s header_rect=%s header_lines=%d longest_chars=%d longest_rect=%s longest_lines=%d longest_pixels=%d" % [resolution, availability.get_global_rect() if availability != null else Rect2(), availability.get_line_count() if availability != null else -1, longest_label.text.length(), longest_rect, longest_label.get_line_count(), longest_pixels])
+			scroll.scroll_vertical = 0
 	root.size = Vector2i(1600, 900)
 	main.queue_free()
 	await process_frame
@@ -391,6 +436,44 @@ func _find_label_containing(node: Node, text: String) -> Label:
 		if found != null:
 			return found
 	return null
+
+func _find_scroll_container(node: Node) -> ScrollContainer:
+	if node == null:
+		return null
+	if node is ScrollContainer:
+		return node as ScrollContainer
+	for child in node.get_children():
+		var found := _find_scroll_container(child)
+		if found != null:
+			return found
+	return null
+
+func _find_longest_label(node: Node) -> Label:
+	if node == null:
+		return null
+	var longest: Label = node as Label if node is Label else null
+	for child in node.get_children():
+		var candidate := _find_longest_label(child)
+		if candidate != null and (longest == null or candidate.text.length() > longest.text.length()):
+			longest = candidate
+	return longest
+
+func _count_text_pixels(image: Image, rect: Rect2) -> int:
+	var start_x := clampi(int(floor(rect.position.x)), 0, image.get_width())
+	var start_y := clampi(int(floor(rect.position.y)), 0, image.get_height())
+	var end_x := clampi(int(ceil(rect.end.x)), 0, image.get_width())
+	var end_y := clampi(int(ceil(rect.end.y)), 0, image.get_height())
+	var count := 0
+	for y in range(start_y, end_y):
+		for x in range(start_x, end_x):
+			var color := image.get_pixel(x, y)
+			if color.a > 0.9 and color.r + color.g + color.b > 1.0 and max(color.r, color.g, color.b) > 0.45:
+				count += 1
+	return count
+
+func _settle_rendered() -> void:
+	await _settle()
+	await RenderingServer.frame_post_draw
 
 func _settle() -> void:
 	for index in range(4):

@@ -14,6 +14,7 @@ godot4 --headless --editor --path . --quit
 ./scripts/verify_screenshot_contract.sh
 godot4 --headless --path . -s res://tests/test_runner.gd
 ./scripts/verify_acceptance_regressions.sh
+./scripts/verify_ascension_render.sh
 ./scripts/verify_screenshots.sh
 ./scripts/verify_save_process.sh
 ./scripts/verify_primary_read_io.sh

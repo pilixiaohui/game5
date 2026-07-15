@@ -11,13 +11,21 @@ func _ready() -> void:
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
 	add_theme_constant_override("separation", 10)
 	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 12)
 	add_child(header)
 	header.add_child(UI.button("返回进化", back_requested.emit))
 	var title := UI.label("飞升只读预览", "PageTitle")
+	title.name = "AscensionPageTitle"
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	header.add_child(title)
-	header.add_child(UI.label("尚未开放", "Warning"))
+	var availability := UI.label("尚未开放", "Warning")
+	availability.name = "AscensionAvailability"
+	availability.autowrap_mode = TextServer.AUTOWRAP_OFF
+	availability.custom_minimum_size = Vector2(90, 28)
+	availability.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	availability.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	header.add_child(availability)
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -81,9 +89,11 @@ func _rebuild() -> void:
 		box.add_child(UI.label("成本 %d 点" % item.cost, "Muted"))
 		permanent_grid.add_child(panel)
 	content.add_child(UI.label("虫群领袖预览", "Section"))
-	var leader_row := HBoxContainer.new()
-	leader_row.add_theme_constant_override("separation", 10)
-	content.add_child(leader_row)
+	var leader_grid := GridContainer.new()
+	leader_grid.columns = 3
+	leader_grid.add_theme_constant_override("h_separation", 10)
+	leader_grid.add_theme_constant_override("v_separation", 10)
+	content.add_child(leader_grid)
 	for leader in preview.leaders:
 		var panel := PanelContainer.new()
 		panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -92,7 +102,8 @@ func _rebuild() -> void:
 		box.add_child(UI.label(leader.name, "Section"))
 		box.add_child(UI.label("优势：%s\n弱项：%s" % [leader.strength, leader.weakness]))
 		box.add_child(UI.label("专属池将在正式飞升版本开放", "Muted"))
-		leader_row.add_child(panel)
+		leader_grid.add_child(panel)
 	var lock := UI.label("预览不提供确认飞升、领袖选择或永久收益购买命令。", "Warning")
+	lock.name = "AscensionLockNotice"
 	lock.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	content.add_child(lock)
