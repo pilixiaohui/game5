@@ -14,7 +14,7 @@ godot4 --path .
 
 ```bash
 godot4 --headless --path . -s res://tests/test_runner.gd
-godot4 --headless --path . -s res://tests/screenshot_runner.gd
+./scripts/verify_screenshots.sh
 ```
 
 游戏存档位于 `user://saves/slot_01.json`。正式飞升、第二地区实装、第二虫巢和多战场属于明确锁定内容。

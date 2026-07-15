@@ -36,24 +36,12 @@ run_cold_start() {
 run_screenshots() {
 	local release_root="$1"
 	local clean_project="$release_root/clean-clone/variants/desktop_v1"
-	local screenshot_log="$release_root/screenshots.log"
-	local status=0
 	env \
-		HOME="$release_root/screenshot-home" \
-		XDG_CONFIG_HOME="$release_root/screenshot-config" \
-		XDG_CACHE_HOME="$release_root/screenshot-cache" \
-		XDG_DATA_HOME="$release_root/screenshot-data" \
-		godot4 --headless --path "$clean_project" -s res://tests/screenshot_runner.gd >"$screenshot_log" 2>&1 || status=$?
-	cat "$screenshot_log"
-	if [[ "$status" -ne 0 ]]; then
-		return "$status"
-	fi
-	local screenshot_count
-	screenshot_count="$(find "$clean_project/screenshots" -maxdepth 1 -type f -name '*.png' | wc -l)"
-	if [[ "$screenshot_count" -ne 6 ]]; then
-		echo "Screenshot gate produced $screenshot_count images instead of 6." >&2
-		return 1
-	fi
+		SCREENSHOT_PROJECT_ROOT="$clean_project" \
+		SCREENSHOT_SCRATCH_PARENT="$release_root" \
+		SCREENSHOT_TIMEOUT_SECONDS="${RELEASE_HEALTH_SCREENSHOT_INNER_TIMEOUT_SECONDS:-90}" \
+		SCREENSHOT_KILL_AFTER_SECONDS="${RELEASE_HEALTH_KILL_AFTER_SECONDS:-5}" \
+		"$project_root/scripts/verify_screenshots.sh"
 }
 
 if [[ "${1:-}" == "--clean-clone" ]]; then
@@ -110,7 +98,7 @@ run_selected_gate() {
 			run_gate "cold-start" "${RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS:-60}" "$project_root/scripts/release_health.sh" --cold-start "$release_root"
 			;;
 		screenshots)
-			run_gate "screenshots" "${RELEASE_HEALTH_SCREENSHOTS_TIMEOUT_SECONDS:-90}" "$project_root/scripts/release_health.sh" --screenshots "$release_root"
+			run_gate "screenshots" "${RELEASE_HEALTH_SCREENSHOTS_TIMEOUT_SECONDS:-110}" "$project_root/scripts/release_health.sh" --screenshots "$release_root"
 			;;
 		*)
 			echo "Unknown release-health gate: $gate_name" >&2
@@ -178,4 +166,4 @@ if [[ "$overall_status" -ne 0 ]]; then
 	exit "$overall_status"
 fi
 
-echo "RELEASE_HEALTH_OK isolation_timeout=${RELEASE_HEALTH_ISOLATION_TIMEOUT_SECONDS:-120}s autosave_timeout=${RELEASE_HEALTH_AUTOSAVE_TIMEOUT_SECONDS:-65}s clone_timeout=${RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS:-45}s cold_start_timeout=${RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS:-60}s screenshots_timeout=${RELEASE_HEALTH_SCREENSHOTS_TIMEOUT_SECONDS:-90}s overall_timeout=${overall_timeout}s scratch_roots=clean-on-exit"
+echo "RELEASE_HEALTH_OK isolation_timeout=${RELEASE_HEALTH_ISOLATION_TIMEOUT_SECONDS:-120}s autosave_timeout=${RELEASE_HEALTH_AUTOSAVE_TIMEOUT_SECONDS:-65}s clone_timeout=${RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS:-45}s cold_start_timeout=${RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS:-60}s screenshots_timeout=${RELEASE_HEALTH_SCREENSHOTS_TIMEOUT_SECONDS:-110}s screenshot_inner_timeout=${RELEASE_HEALTH_SCREENSHOT_INNER_TIMEOUT_SECONDS:-90}s overall_timeout=${overall_timeout}s scratch_roots=clean-on-exit"

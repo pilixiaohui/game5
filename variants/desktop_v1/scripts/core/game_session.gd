@@ -477,21 +477,46 @@ func attack_node(node_id: String) -> bool:
 func retreat() -> bool:
 	if state.active_battle.is_empty():
 		return _reject("没有可以撤离的主动战场。")
-	var battle: Dictionary = state.active_battle
-	var node := _node(battle.node_id)
-	state.units.biter += int(battle.biter)
-	state.units.root_spore += int(battle.spore)
-	state.units.root_mat += int(battle.roots)
-	node.enemy = min(int(node.enemy_max), int(battle.enemy) + max(1, int(ceil(float(node.enemy_max) * 0.15))))
-	node.structure_hp = int(battle.structure_hp)
-	state.stats.retreats += 1
-	_mark("FH-007")
-	_record("battle_retreated", "撤离原子提交：可机动单位已回归，固定菌毯留置，敌军开始有源恢复。", {"node_id": node.id})
-	state.active_battle = {}
-	battle_ended.emit(node.id, false)
-	save_game()
+	var node_id := String(state.active_battle.node_id)
+	var candidate := _build_retreat_candidate()
+	var normalized := _normalize_state(candidate)
+	if not normalized.ok:
+		return _reject("撤离候选状态校验失败：%s；当前战场和存档保持不变。" % normalized.error)
+	var commit := _commit_snapshot(DEFAULT_SAVE_PATH, normalized.state, true)
+	if not commit.ok:
+		return _reject("撤离持久化失败：%s 当前战场和存档保持不变，可重试。" % commit.error)
+	state = normalized.state
+	notice_posted.emit("撤离原子提交：可机动单位已回归，固定菌毯留置，敌军开始有源恢复。", "info")
+	battle_ended.emit(node_id, false)
 	_emit_change()
 	return true
+
+func _build_retreat_candidate() -> Dictionary:
+	var candidate := state.duplicate(true)
+	var battle: Dictionary = candidate.active_battle
+	var node: Dictionary = {}
+	for candidate_node in candidate.nodes:
+		if String(candidate_node.id) == String(battle.node_id):
+			node = candidate_node
+			break
+	candidate.units.biter += int(battle.biter)
+	candidate.units.root_spore += int(battle.spore)
+	candidate.units.root_mat += int(battle.roots)
+	node.enemy = min(int(node.enemy_max), int(battle.enemy) + max(1, int(ceil(float(node.enemy_max) * 0.15))))
+	node.structure_hp = int(battle.structure_hp)
+	candidate.stats.retreats += 1
+	if not candidate.milestones.has("FH-007"):
+		candidate.milestones["FH-007"] = int(candidate.tick)
+	candidate.ledger.push_front({
+		"tick": int(candidate.tick),
+		"type": "battle_retreated",
+		"message": "撤离原子提交：可机动单位已回归，固定菌毯留置，敌军开始有源恢复。",
+		"details": {"node_id": node.id},
+	})
+	if candidate.ledger.size() > 80:
+		candidate.ledger.resize(80)
+	candidate.active_battle = {}
+	return candidate
 
 func induce_candidate() -> bool:
 	if not state.unlocks.active_induction:
@@ -853,7 +878,7 @@ func load_game(path: String = DEFAULT_SAVE_PATH) -> bool:
 	_emit_change()
 	return true
 
-func _commit_snapshot(path: String, snapshot: Dictionary) -> Dictionary:
+func _commit_snapshot(path: String, snapshot: Dictionary, restore_backup_on_failure: bool = false) -> Dictionary:
 	var base_dir := path.get_base_dir()
 	if not base_dir.is_empty():
 		var mkdir_error := _fs_make_dir(ProjectSettings.globalize_path(base_dir), IO_CREATE_SAVE_DIRECTORY)
@@ -879,6 +904,10 @@ func _commit_snapshot(path: String, snapshot: Dictionary) -> Dictionary:
 		if not backup_commit.ok:
 			return backup_commit
 		var primary_commit := _commit_primary(path)
+		if not primary_commit.ok and restore_backup_on_failure:
+			var backup_restore := _restore_committed_backup(path, bool(backup_commit.had_backup))
+			if not backup_restore.ok:
+				return _commit_error("%s 已承诺备份恢复失败：%s" % [primary_commit.error, backup_restore.error])
 		if not primary_commit.ok:
 			return primary_commit
 	else:
@@ -932,6 +961,19 @@ func _commit_backup(path: String) -> Dictionary:
 	var committed_backup := _read_snapshot(backup_path, IO_VALIDATE_COMMITTED_BACKUP)
 	if not committed_backup.ok:
 		return _commit_error("备份提交后校验失败：%s。" % committed_backup.error)
+	return {"ok": true, "error": "", "had_backup": existing_backup.ok}
+
+func _restore_committed_backup(path: String, had_backup: bool) -> Dictionary:
+	var backup_path := path + BACKUP_SUFFIX
+	var previous_backup := path + BACKUP_PREVIOUS_SUFFIX
+	var remove_current := _remove_if_exists(backup_path, IO_REMOVE_EXISTING_BACKUP)
+	if remove_current != OK:
+		return _commit_error("无法移除未完成事务的备份（%s）。" % remove_current)
+	if not had_backup:
+		return {"ok": true, "error": ""}
+	var restore_error := _restore_copy(previous_backup, backup_path, IO_RESTORE_PREVIOUS_BACKUP_CLEANUP, IO_RESTORE_PREVIOUS_BACKUP_COPY, IO_VALIDATE_RESTORE_PREVIOUS_BACKUP, IO_RESTORE_PREVIOUS_BACKUP_DESTINATION, IO_RESTORE_PREVIOUS_BACKUP_COMMIT)
+	if restore_error != OK:
+		return _commit_error("无法恢复事务前备份（%s）。" % restore_error)
 	return {"ok": true, "error": ""}
 
 func _commit_primary(path: String) -> Dictionary:

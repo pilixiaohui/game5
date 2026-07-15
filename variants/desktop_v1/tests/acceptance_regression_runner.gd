@@ -1,5 +1,8 @@
 extends SceneTree
 
+const FaultSession = preload("res://tests/fault_injecting_game_session.gd")
+const BattlePage = preload("res://scripts/ui/battle_page.gd")
+
 var session: Node
 var failures: Array[String] = []
 var assertions := 0
@@ -10,6 +13,7 @@ func _initialize() -> void:
 	call_deferred("_run")
 
 func _run() -> void:
+	Engine.max_fps = 30
 	session = root.get_node("GameSession")
 	session.set_process(false)
 	scratch_data_root = _argument("--scratch-data-root=").simplify_path()
@@ -26,17 +30,20 @@ func _run() -> void:
 	await _test_retreat_confirmation_is_a_safe_decision_boundary()
 	_print_case("ACC-RULE-007 retreat confirmation freezes and resolves atomically", before)
 	before = failures.size()
+	await _test_retreat_persistence_failures_are_atomic()
+	_print_case("ACC-SAVE-001 retreat I/O failures preserve memory and committed slots", before)
+	before = failures.size()
 	await _test_ascension_layout_at_supported_resolutions()
 	_print_case("ACC-A11Y-001/002 ascension layout and text remain readable", before)
 
 	_cleanup_slots()
 	if failures.is_empty():
-		print("ACCEPTANCE_REGRESSIONS_OK cases=3 resolutions=3 assertions=%d" % assertions)
+		print("ACCEPTANCE_REGRESSIONS_OK cases=4 resolutions=3 assertions=%d" % assertions)
 		quit(0)
 	else:
 		for failure in failures:
 			push_error(failure)
-		print("ACCEPTANCE_REGRESSIONS_FAILED cases=3 resolutions=3 assertions=%d failures=%d" % [assertions, failures.size()])
+		print("ACCEPTANCE_REGRESSIONS_FAILED cases=4 resolutions=3 assertions=%d failures=%d" % [assertions, failures.size()])
 		quit(1)
 
 func _test_new_game_modal_cancel_and_escape() -> void:
@@ -80,12 +87,31 @@ func _test_new_game_modal_cancel_and_escape() -> void:
 	_assert_true(not continue_button.disabled, "continue must remain available after modal cancellation")
 	_assert_slots_unchanged(state_before, primary_before, backup_before, "Esc cancel")
 	_assert_no_save_transients("Esc cancel")
+
+	await _click(new_game_button)
+	_assert_true(confirmation.visible, "new-game modal must reopen for keyboard focus traversal")
+	await _press_key(KEY_TAB)
+	_assert_focus_in(confirmation, "Tab")
+	await _press_key(KEY_TAB, true)
+	_assert_focus_in(confirmation, "Shift+Tab")
+	await _press_key(KEY_UP)
+	_assert_focus_in(confirmation, "Up")
+	await _press_key(KEY_DOWN)
+	_assert_focus_in(confirmation, "Down")
+	await _press_key(KEY_LEFT)
+	_assert_focus_in(confirmation, "Left")
+	await _press_key(KEY_RIGHT)
+	_assert_focus_in(confirmation, "Right")
+	await _press_key(KEY_ENTER)
+	_assert_true(_find_shell(main) == null, "Enter after modal traversal must not activate a background command")
+	_assert_slots_unchanged(state_before, primary_before, backup_before, "modal keyboard traversal")
 	main.queue_free()
 	await process_frame
 
 func _test_retreat_confirmation_is_a_safe_decision_boundary() -> void:
 	_cleanup_slots()
 	session.new_game(8402)
+	session.set_speed(4)
 	session.state.units.biter = 16
 	session.state.units.root_spore = 4
 	_assert_true(session.attack_node("B"), "retreat UI fixture must start a production battle")
@@ -111,26 +137,92 @@ func _test_retreat_confirmation_is_a_safe_decision_boundary() -> void:
 		await process_frame
 		return
 	var confirm_band := confirm_button.get_parent().get_parent() as Control
-	await _click(retreat_button)
-	_assert_true(confirm_band.visible, "retreat command must open a visible confirmation")
+	session.set_process(true)
 	var tick_before := int(session.state.tick)
+	await _click_same_frame(retreat_button)
+	_assert_true(confirm_band.visible, "retreat command must open a visible confirmation")
 	var battle_before := JSON.stringify(session.state.active_battle)
-	session.call("_process", 2.2)
+	await _wait_frames(18)
 	_assert_equal(int(session.state.tick), tick_before, "battle tick must not advance while retreat confirmation is open")
 	_assert_equal(JSON.stringify(session.state.active_battle), battle_before, "battle facts must not change while retreat confirmation is open")
 
-	await _click(close_button)
+	await _click_same_frame(close_button)
 	_assert_true(not confirm_band.visible, "closing retreat confirmation must hide it")
-	session.call("_process", 1.1)
+	await _wait_frames(12)
 	_assert_true(int(session.state.tick) > tick_before, "cancelling retreat must restore normal simulation")
 	_assert_true(not session.state.active_battle.is_empty(), "cancelled retreat must leave the active battle available")
 	var retreats_before := int(session.state.stats.retreats)
-	await _click(retreat_button)
-	await _click(confirm_button)
+	await _click_same_frame(retreat_button)
+	await _click_same_frame(confirm_button)
 	_assert_true(session.state.active_battle.is_empty(), "confirming retreat must clear the active battle")
 	_assert_equal(int(session.state.stats.retreats), retreats_before + 1, "confirming retreat must commit exactly one retreat")
 	_assert_true(FileAccess.file_exists(session.DEFAULT_SAVE_PATH), "confirmed retreat must persist its production result")
+	session.set_process(false)
 	main.queue_free()
+	await process_frame
+
+func _test_retreat_persistence_failures_are_atomic() -> void:
+	var subject := FaultSession.new()
+	subject.name = "RetreatFaultSession"
+	root.add_child(subject)
+	subject.set_process(false)
+	var ended_events: Array = []
+	subject.battle_ended.connect(func(node_id: String, captured: bool) -> void: ended_events.append([node_id, captured]))
+	var cases := [
+		{"name": "staged open", "boundary": "write_staged_snapshot", "phase": "open"},
+		{"name": "staged partial write", "boundary": "write_staged_snapshot", "phase": "write"},
+		{"name": "primary rename", "boundary": "commit_primary", "phase": "rename"},
+	]
+	for index in range(cases.size()):
+		var case: Dictionary = cases[index]
+		_cleanup_slots_for(subject)
+		subject.clear_injections()
+		ended_events.clear()
+		subject.new_game(8450 + index)
+		subject.set_speed(4)
+		subject.state.units.biter = 16
+		subject.state.units.root_spore = 4
+		_assert_true(subject.attack_node("B"), "%s fixture must start a production battle" % case.name)
+		_assert_true(subject.save_game(), "%s fixture must create a primary" % case.name)
+		_assert_true(subject.save_game(), "%s fixture must create a committed backup" % case.name)
+		var state_before := JSON.stringify(subject.snapshot())
+		var primary_before := FileAccess.get_file_as_bytes(subject.DEFAULT_SAVE_PATH)
+		var backup_before := FileAccess.get_file_as_bytes(subject.DEFAULT_SAVE_PATH + subject.BACKUP_SUFFIX)
+		subject.clear_injections()
+		subject.inject(case.boundary, case.phase)
+		var page := BattlePage.new(subject)
+		root.add_child(page)
+		page.set_snapshot(subject.snapshot())
+		await _settle()
+		var retreat_button := page.find_child("RetreatButton", true, false) as Button
+		var confirm_button := page.find_child("ConfirmRetreatButton", true, false) as Button
+		var confirmation := page.find_child("RetreatConfirmation", true, false) as Control
+		_assert_true(retreat_button != null and confirm_button != null and confirmation != null, "%s must expose production retreat controls" % case.name)
+		subject.set_process(true)
+		var tick_before := int(subject.state.tick)
+		await _click_same_frame(retreat_button)
+		await _wait_frames(12)
+		_assert_equal(int(subject.state.tick), tick_before, "%s confirmation must pause the real scheduler" % case.name)
+		await _click_same_frame(confirm_button)
+		_assert_true(confirmation.visible, "%s failure must keep confirmation visible for retry" % case.name)
+		await _wait_frames(12)
+		_assert_equal(int(subject.state.tick), tick_before, "%s failure must retain decision pause" % case.name)
+		_assert_equal(JSON.stringify(subject.snapshot()), state_before, "%s failure must preserve memory" % case.name)
+		_assert_equal(FileAccess.get_file_as_bytes(subject.DEFAULT_SAVE_PATH), primary_before, "%s failure must preserve primary bytes" % case.name)
+		_assert_equal(FileAccess.get_file_as_bytes(subject.DEFAULT_SAVE_PATH + subject.BACKUP_SUFFIX), backup_before, "%s failure must preserve backup bytes" % case.name)
+		_assert_equal(ended_events.size(), 0, "%s failure must not emit battle_ended" % case.name)
+		_assert_true("%s.%s" % [case.boundary, case.phase] in subject.operation_phase_trace, "%s fixture must reach the injected phase" % case.name)
+		subject.clear_injections()
+		await _click_same_frame(confirm_button)
+		_assert_true(not confirmation.visible, "%s clean retry must close confirmation" % case.name)
+		_assert_true(subject.state.active_battle.is_empty(), "%s clean retry must commit retreat" % case.name)
+		_assert_equal(ended_events.size(), 1, "%s clean retry must emit battle_ended once" % case.name)
+		subject.set_process(false)
+		page.queue_free()
+		await process_frame
+	subject.clear_injections()
+	_cleanup_slots_for(subject)
+	subject.queue_free()
 	await process_frame
 
 func _test_ascension_layout_at_supported_resolutions() -> void:
@@ -207,6 +299,26 @@ func _click(button: Button) -> void:
 	root.push_input(up)
 	await _settle()
 
+func _click_same_frame(button: Button) -> void:
+	var position := button.get_global_rect().get_center()
+	var motion := InputEventMouseMotion.new()
+	motion.position = position
+	motion.global_position = position
+	root.push_input(motion)
+	var down := InputEventMouseButton.new()
+	down.button_index = MOUSE_BUTTON_LEFT
+	down.position = position
+	down.global_position = position
+	down.pressed = true
+	root.push_input(down)
+	var up := InputEventMouseButton.new()
+	up.button_index = MOUSE_BUTTON_LEFT
+	up.position = position
+	up.global_position = position
+	up.pressed = false
+	root.push_input(up)
+	await process_frame
+
 func _press_escape() -> void:
 	var down := InputEventKey.new()
 	down.keycode = KEY_ESCAPE
@@ -220,6 +332,29 @@ func _press_escape() -> void:
 	up.pressed = false
 	root.push_input(up)
 	await _settle()
+
+func _press_key(keycode: Key, shift_pressed: bool = false) -> void:
+	var down := InputEventKey.new()
+	down.keycode = keycode
+	down.physical_keycode = keycode
+	down.shift_pressed = shift_pressed
+	down.pressed = true
+	root.push_input(down)
+	var up := InputEventKey.new()
+	up.keycode = keycode
+	up.physical_keycode = keycode
+	up.shift_pressed = shift_pressed
+	up.pressed = false
+	root.push_input(up)
+	await _settle()
+
+func _assert_focus_in(scope: Control, action: String) -> void:
+	var owner := root.gui_get_focus_owner()
+	_assert_true(owner != null and scope.is_ancestor_of(owner), "%s must keep keyboard focus inside the new-game modal" % action)
+
+func _wait_frames(count: int) -> void:
+	for index in range(count):
+		await process_frame
 
 func _find_shell(node: Node) -> Node:
 	if node.has_method("_show_page") and node.has_method("_update_battle_strip"):
@@ -268,8 +403,11 @@ func _print_case(name: String, before: int) -> void:
 		print("FAIL %s failures=%d" % [name, failures.size() - before])
 
 func _cleanup_slots() -> void:
-	for suffix in ["", session.BACKUP_SUFFIX, session.SAVE_TEMP_SUFFIX, session.BACKUP_TEMP_SUFFIX, session.BACKUP_PREVIOUS_SUFFIX, session.ROLLBACK_SUFFIX, session.RECOVERY_SUFFIX, session.BACKUP_SUFFIX + session.RECOVERY_SUFFIX]:
-		var path: String = session.DEFAULT_SAVE_PATH + suffix
+	_cleanup_slots_for(session)
+
+func _cleanup_slots_for(owner: Node) -> void:
+	for suffix in ["", owner.BACKUP_SUFFIX, owner.SAVE_TEMP_SUFFIX, owner.BACKUP_TEMP_SUFFIX, owner.BACKUP_PREVIOUS_SUFFIX, owner.ROLLBACK_SUFFIX, owner.RECOVERY_SUFFIX, owner.BACKUP_SUFFIX + owner.RECOVERY_SUFFIX]:
+		var path: String = owner.DEFAULT_SAVE_PATH + suffix
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 
@@ -283,6 +421,9 @@ func _assert_true(value: bool, message: String) -> void:
 	assertions += 1
 	if not value:
 		failures.append(message)
+
+func _assert_false(value: bool, message: String) -> void:
+	_assert_true(not value, message)
 
 func _assert_equal(actual: Variant, expected: Variant, message: String) -> void:
 	assertions += 1

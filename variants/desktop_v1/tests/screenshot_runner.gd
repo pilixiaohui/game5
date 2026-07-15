@@ -1,57 +1,18 @@
 extends SceneTree
 
 const CAPTURE_CHILD_ARG := "--capture-child"
-const SCREENSHOT_SPECS := [
-	{"path": "res://screenshots/title_1600x900.png", "size": Vector2i(1600, 900)},
-	{"path": "res://screenshots/hive_1600x900.png", "size": Vector2i(1600, 900)},
-	{"path": "res://screenshots/map_1600x900.png", "size": Vector2i(1600, 900)},
-	{"path": "res://screenshots/battle_1600x900.png", "size": Vector2i(1600, 900)},
-	{"path": "res://screenshots/evolution_1280x720.png", "size": Vector2i(1280, 720)},
-	{"path": "res://screenshots/system_1280x720.png", "size": Vector2i(1280, 720)},
-]
 
 var session: Node
 var main: Control
 var capture_failures: Array[String] = []
 
 func _initialize() -> void:
-	if CAPTURE_CHILD_ARG in OS.get_cmdline_user_args():
-		root.size = Vector2i(1600, 900)
-		call_deferred("_run_capture_child")
-	else:
-		call_deferred("_run_headless_controller")
-
-func _run_headless_controller() -> void:
-	var screenshot_root := ProjectSettings.globalize_path("res://screenshots")
-	DirAccess.make_dir_recursive_absolute(screenshot_root)
-	for spec in SCREENSHOT_SPECS:
-		var absolute_path := ProjectSettings.globalize_path(String(spec.path))
-		if FileAccess.file_exists(absolute_path):
-			DirAccess.remove_absolute(absolute_path)
-	var output: Array = []
-	var project_path := ProjectSettings.globalize_path("res://").trim_suffix("/")
-	var arguments := PackedStringArray([
-		"-a",
-		OS.get_executable_path(),
-		"--audio-driver", "Dummy",
-		"--path", project_path,
-		"-s", "res://tests/screenshot_runner.gd",
-		"--", CAPTURE_CHILD_ARG,
-	])
-	var status := OS.execute("xvfb-run", arguments, output, true)
-	for line in output:
-		print(String(line).trim_suffix("\n"))
-	if status != 0:
-		push_error("SCREENSHOTS_FAILED capture child exit=%d" % status)
-		quit(status)
+	if CAPTURE_CHILD_ARG not in OS.get_cmdline_user_args():
+		push_error("SCREENSHOTS_REFUSED use ./scripts/verify_screenshots.sh")
+		quit(2)
 		return
-	for spec in SCREENSHOT_SPECS:
-		_validate_written_screenshot(String(spec.path), spec.size)
-	if capture_failures.is_empty():
-		print("SCREENSHOTS_OK count=6 desktop_sizes=1600x900,1280x720 controller=headless-xvfb")
-		quit(0)
-	else:
-		_finish_failed()
+	root.size = Vector2i(1600, 900)
+	call_deferred("_run_capture_child")
 
 func _run_capture_child() -> void:
 	session = root.get_node("GameSession")
@@ -91,7 +52,7 @@ func _run_capture_child() -> void:
 	await _settle()
 	await _capture("res://screenshots/system_1280x720.png", Vector2i(1280, 720))
 	if capture_failures.is_empty():
-		print("SCREENSHOTS_CHILD_OK count=6")
+		print("SCREENSHOTS_OK count=6 desktop_sizes=1600x900,1280x720")
 		quit(0)
 	else:
 		_finish_failed()
@@ -134,15 +95,6 @@ func _capture(path: String, expected_size: Vector2i) -> void:
 		capture_failures.append("failed to save %s: error=%s" % [path, error])
 		return
 	print("SCREENSHOT_OK path=%s sampled_colors=%d" % [path, sampled_colors.size()])
-
-func _validate_written_screenshot(path: String, expected_size: Vector2i) -> void:
-	var image := Image.new()
-	var error := image.load(ProjectSettings.globalize_path(path))
-	if error != OK:
-		capture_failures.append("controller could not load %s: error=%s" % [path, error])
-		return
-	if Vector2i(image.get_width(), image.get_height()) != expected_size:
-		capture_failures.append("controller found wrong dimensions for %s: %dx%d" % [path, image.get_width(), image.get_height()])
 
 func _finish_failed() -> void:
 	for failure in capture_failures:

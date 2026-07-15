@@ -11,10 +11,12 @@ var continue_button: Button
 var settings_overlay: Control
 var new_game_confirmation: Control
 var title_notice: Label
+var background_focus_modes: Dictionary = {}
 
 func _ready() -> void:
 	theme = ThemeFactory.build()
 	set_process_unhandled_input(true)
+	get_viewport().gui_focus_changed.connect(_on_gui_focus_changed)
 	_build_background()
 	if not GameSession.notice_posted.is_connected(_show_title_notice):
 		GameSession.notice_posted.connect(_show_title_notice)
@@ -149,32 +151,65 @@ func _build_new_game_confirmation() -> void:
 	actions.add_child(cancel)
 	confirm.focus_neighbor_left = confirm.get_path_to(cancel)
 	confirm.focus_neighbor_right = confirm.get_path_to(cancel)
+	confirm.focus_neighbor_top = confirm.get_path_to(confirm)
+	confirm.focus_neighbor_bottom = confirm.get_path_to(confirm)
 	confirm.focus_next = confirm.get_path_to(cancel)
+	confirm.focus_previous = confirm.get_path_to(cancel)
 	cancel.focus_neighbor_left = cancel.get_path_to(confirm)
 	cancel.focus_neighbor_right = cancel.get_path_to(confirm)
+	cancel.focus_neighbor_top = cancel.get_path_to(cancel)
+	cancel.focus_neighbor_bottom = cancel.get_path_to(cancel)
 	cancel.focus_next = cancel.get_path_to(confirm)
+	cancel.focus_previous = cancel.get_path_to(confirm)
 
 func _new_game() -> void:
 	if GameSession.has_save():
+		_set_background_focus_enabled(false)
 		new_game_confirmation.visible = true
-		var cancel := new_game_confirmation.find_child("CancelNewGameButton", true, false) as Button
-		if cancel:
-			cancel.grab_focus()
+		_focus_new_game_modal()
 		return
 	_start_new_game()
 
 func _confirm_new_game() -> void:
-	new_game_confirmation.visible = false
+	_close_new_game_confirmation(false)
 	_start_new_game()
 
 func _cancel_new_game() -> void:
 	_close_new_game_confirmation()
 	_show_title_notice("已取消重开，当前状态和存档未改变。", "info")
 
-func _close_new_game_confirmation() -> void:
+func _close_new_game_confirmation(restore_focus: bool = true) -> void:
 	new_game_confirmation.visible = false
-	if is_instance_valid(new_game_button):
+	_set_background_focus_enabled(true)
+	if restore_focus and is_instance_valid(new_game_button):
 		new_game_button.grab_focus()
+
+func _focus_new_game_modal() -> void:
+	if not is_instance_valid(new_game_confirmation) or not new_game_confirmation.visible:
+		return
+	var cancel := new_game_confirmation.find_child("CancelNewGameButton", true, false) as Button
+	if cancel:
+		cancel.grab_focus()
+
+func _set_background_focus_enabled(enabled: bool) -> void:
+	if enabled:
+		for control in background_focus_modes.keys():
+			if is_instance_valid(control):
+				control.focus_mode = int(background_focus_modes[control])
+		background_focus_modes.clear()
+		return
+	background_focus_modes.clear()
+	for node in content.find_children("*", "Control", true, false):
+		var control := node as Control
+		if control != null and control.focus_mode != Control.FOCUS_NONE:
+			background_focus_modes[control] = control.focus_mode
+			control.focus_mode = Control.FOCUS_NONE
+
+func _on_gui_focus_changed(control: Control) -> void:
+	if not is_instance_valid(new_game_confirmation) or not new_game_confirmation.visible:
+		return
+	if control == null or not new_game_confirmation.is_ancestor_of(control):
+		call_deferred("_focus_new_game_modal")
 
 func _start_new_game() -> void:
 	GameSession.new_game()
@@ -194,7 +229,7 @@ func _show_title_notice(message: String, level: String) -> void:
 
 func _show_game() -> void:
 	if is_instance_valid(new_game_confirmation):
-		new_game_confirmation.visible = false
+		_close_new_game_confirmation(false)
 	UI.clear(content)
 	content.add_theme_constant_override("margin_left", 0)
 	content.add_theme_constant_override("margin_right", 0)
@@ -213,3 +248,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel") and is_instance_valid(new_game_confirmation) and new_game_confirmation.visible:
 		_cancel_new_game()
 		get_viewport().set_input_as_handled()
+	elif event.is_action_pressed("ui_accept") and is_instance_valid(new_game_confirmation) and new_game_confirmation.visible:
+		var owner := get_viewport().gui_get_focus_owner()
+		if owner == null or not new_game_confirmation.is_ancestor_of(owner):
+			_focus_new_game_modal()
+			get_viewport().set_input_as_handled()

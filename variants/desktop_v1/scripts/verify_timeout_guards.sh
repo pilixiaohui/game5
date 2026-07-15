@@ -90,6 +90,37 @@ expect_leader_exit_cleanup() {
 	assert_scratch_empty leader-exit "$scratch_parent"
 }
 
+expect_screenshot_leader_exit_cleanup() {
+	local scratch_parent="$1"
+	local project_fixture="$2"
+	local pid_file="$3"
+	mkdir -p "$scratch_parent" "$project_fixture"
+	rm -f "$pid_file" "$pid_file.pgid"
+	local started_ns
+	started_ns="$(date +%s%N)"
+	local status=0
+	env \
+		SCREENSHOT_TIMEOUT_SECONDS=5 \
+		SCREENSHOT_KILL_AFTER_SECONDS=1 \
+		SCREENSHOT_SCRATCH_PARENT="$scratch_parent" \
+		SCREENSHOT_PROJECT_ROOT="$project_fixture" \
+		SCREENSHOT_GODOT_BIN="$hanging_command" \
+		HANG_MODE=leader_exit \
+		HANG_PID_FILE="$pid_file" \
+		./scripts/verify_screenshots.sh || status=$?
+	local elapsed_ns=$(( $(date +%s%N) - started_ns ))
+	if [[ "$status" -eq 0 ]]; then
+		echo "Screenshot leader-exit fixture passed without producing screenshots." >&2
+		return 1
+	fi
+	if [[ "$elapsed_ns" -gt 6000000000 ]]; then
+		echo "Screenshot leader-exit cleanup exceeded its bound: elapsed_ns=$elapsed_ns" >&2
+		return 1
+	fi
+	assert_process_group_gone "$pid_file"
+	assert_scratch_empty screenshot-leader-exit "$scratch_parent"
+}
+
 expect_term_cleanup() {
 	local scratch_parent="$1"
 	local pid_file="$2"
@@ -142,6 +173,22 @@ expect_leader_exit_cleanup "$leader_parent" "$test_root/leader.pid"
 term_parent="$test_root/term-parent"
 expect_term_cleanup "$term_parent" "$test_root/term.pid"
 
+screenshot_parent="$test_root/screenshot-parent"
+screenshot_project="$test_root/screenshot-project"
+expect_timeout screenshot-real-chain "$screenshot_parent" "$test_root/screenshot-timeout.pid" \
+	env \
+		SCREENSHOT_TIMEOUT_SECONDS=1 \
+		SCREENSHOT_KILL_AFTER_SECONDS=1 \
+		SCREENSHOT_SCRATCH_PARENT="$screenshot_parent" \
+		SCREENSHOT_PROJECT_ROOT="$screenshot_project" \
+		SCREENSHOT_GODOT_BIN="$hanging_command" \
+		HANG_MODE=wait \
+		HANG_PID_FILE="$test_root/screenshot-timeout.pid" \
+		./scripts/verify_screenshots.sh
+
+screenshot_leader_parent="$test_root/screenshot-leader-parent"
+expect_screenshot_leader_exit_cleanup "$screenshot_leader_parent" "$screenshot_project" "$test_root/screenshot-leader.pid"
+
 release_parent="$test_root/release-parent"
 for gate_name in isolation autosave clean-clone cold-start screenshots; do
 	expect_timeout "release-$gate_name" "$release_parent" "$test_root/release-$gate_name.pid" \
@@ -175,4 +222,4 @@ expect_timeout release-overall "$release_parent" "$test_root/release-overall.pid
 		HANG_PID_FILE="$test_root/release-overall.pid" \
 		./scripts/release_health.sh
 
-echo "TIMEOUT_GUARDS_OK normal=clean leader_exit=clean timeout=bounded term=clean release_subgates=5 overall=bounded pgids=reaped scratch_roots=clean"
+echo "TIMEOUT_GUARDS_OK normal=clean leader_exit=clean timeout=bounded term=clean screenshot_nested_timeout=bounded screenshot_leader_exit=clean release_subgates=5 overall=bounded pgids=reaped scratch_roots=clean"

@@ -10,8 +10,14 @@ var title: Label
 var metrics: Label
 var retreat_button: Button
 var confirm_band: PanelContainer
+var session: Node
+
+func _init(session_override: Node = null) -> void:
+	session = session_override
 
 func _ready() -> void:
+	if session == null:
+		session = get_node("/root/GameSession")
 	set_process_unhandled_input(true)
 	visibility_changed.connect(_on_visibility_changed)
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -62,28 +68,32 @@ func set_snapshot(value: Dictionary) -> void:
 		metrics.text = "从区域图选择一个可观察节点提交进攻"
 		_hide_retreat_confirm(false)
 	else:
-		var node := GameSession.node_by_id(battle.node_id)
+		var node: Dictionary = session.node_by_id(battle.node_id)
 		title.text = "%s · %s" % [battle.node_id, node.name]
 		metrics.text = "噬咬体 %d   根脉孢体 %d   留置菌毯 %d     敌军 %d   结构 %d     歼灭 %d   战损 %d" % [battle.biter, battle.spore, battle.roots, battle.enemy, battle.structure_hp, battle.kills, battle.losses]
 
 func _show_retreat_confirm() -> void:
 	if confirm_band.visible or snapshot.active_battle.is_empty():
 		return
-	GameSession.set_decision_pause(RETREAT_DECISION_PAUSE, true)
+	session.set_decision_pause(RETREAT_DECISION_PAUSE, true)
 	confirm_band.visible = true
 	var cancel := confirm_band.find_child("CancelRetreatButton", true, false) as Button
 	if cancel:
 		cancel.grab_focus()
 
 func _hide_retreat_confirm(restore_focus: bool = true) -> void:
-	GameSession.set_decision_pause(RETREAT_DECISION_PAUSE, false)
+	session.set_decision_pause(RETREAT_DECISION_PAUSE, false)
 	confirm_band.visible = false
 	if restore_focus and is_instance_valid(retreat_button) and retreat_button.is_visible_in_tree():
 		retreat_button.grab_focus()
 
 func _confirm_retreat() -> void:
-	GameSession.retreat()
-	_hide_retreat_confirm()
+	if session.retreat():
+		_hide_retreat_confirm()
+	else:
+		var confirm := confirm_band.find_child("ConfirmRetreatButton", true, false) as Button
+		if confirm:
+			confirm.grab_focus()
 
 func _on_visibility_changed() -> void:
 	if not is_visible_in_tree() and is_instance_valid(confirm_band) and confirm_band.visible:
@@ -95,4 +105,5 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 func _exit_tree() -> void:
-	GameSession.set_decision_pause(RETREAT_DECISION_PAUSE, false)
+	if is_instance_valid(session):
+		session.set_decision_pause(RETREAT_DECISION_PAUSE, false)
