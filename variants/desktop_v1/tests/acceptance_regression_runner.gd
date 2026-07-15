@@ -2,6 +2,8 @@ extends SceneTree
 
 const FaultSession = preload("res://tests/fault_injecting_game_session.gd")
 const BattlePage = preload("res://scripts/ui/battle_page.gd")
+const REAL_AUTOSAVE_MINIMUM_MSEC := 30000
+const REAL_AUTOSAVE_DEADLINE_MSEC := 37000
 
 var session: Node
 var failures: Array[String] = []
@@ -354,26 +356,33 @@ func _test_global_persistence_recovery_entrypoints() -> void:
 	root.add_child(subject)
 	subject.set_process(false)
 	_assert_true(subject.has_signal("persistence_recovery_changed"), "GameSession must expose an explicit persistence recovery state signal")
+	var battle_events: Array = []
+	var success_notices: Array[String] = []
+	subject.battle_ended.connect(func(node_id: String, captured: bool) -> void: battle_events.append([node_id, captured]))
+	subject.notice_posted.connect(func(message: String, level: String) -> void:
+		if level == "success":
+			success_notices.append(message)
+	)
 
 	await _exercise_uncertain_save_entry(subject, "Ctrl+S", func(main: Control) -> void:
 		await _press_save_shortcut()
-	, true)
+	, battle_events, success_notices)
 	await _exercise_uncertain_save_entry(subject, "system page save", func(main: Control) -> void:
 		var shell := _find_shell(main)
 		if shell != null:
-			shell.call("_show_page", "system")
-			await _settle()
+			var system_button := _find_button_by_text(shell, "系统")
+			_assert_true(system_button != null, "system page fixture must expose the production navigation command")
+			if system_button != null:
+				await _click_same_frame(system_button)
+				await _settle()
 		var save_button := _find_button_by_text(main, "手动保存")
 		_assert_true(save_button != null, "system page must expose its production save command")
 		if save_button != null:
 			await _click_same_frame(save_button)
-	)
+	, battle_events, success_notices)
 	await _exercise_uncertain_save_entry(subject, "scheduler autosave", func(main: Control) -> void:
-		subject.set("_autosave_elapsed", 29.99)
-		subject.set_process(true)
-		await _wait_frames(5)
-		subject.set_process(false)
-	)
+		await _trigger_real_autosave(subject)
+	, battle_events, success_notices)
 
 	_cleanup_slots_for(subject)
 	subject.state = {}
@@ -384,13 +393,12 @@ func _test_global_persistence_recovery_entrypoints() -> void:
 	await _settle()
 	var new_game := title_main.find_child("NewGameButton", true, false) as Button
 	_assert_true(new_game != null, "first-save fixture must expose the production new-game command")
+	battle_events.clear()
+	success_notices.clear()
 	if new_game != null:
 		await _click_same_frame(new_game)
 	_assert_true("validate_first_primary.open" in subject.operation_phase_trace, "first new game must reach the injected post-commit open boundary")
-	if not subject.is_reload_required():
-		subject.new_game(8699)
-		subject.save_game()
-	await _assert_and_resolve_global_recovery(title_main, subject, "first new game save")
+	await _assert_and_resolve_global_recovery(title_main, subject, "first new game save", battle_events, success_notices)
 	_assert_true(_find_shell(title_main) != null, "successful first-save reload must enter the game using disk authority")
 	title_main.queue_free()
 	await process_frame
@@ -398,7 +406,7 @@ func _test_global_persistence_recovery_entrypoints() -> void:
 	subject.queue_free()
 	await process_frame
 
-func _exercise_uncertain_save_entry(subject: Node, action_name: String, trigger: Callable, verify_retry_focus: bool = false) -> void:
+func _exercise_uncertain_save_entry(subject: Node, action_name: String, trigger: Callable, battle_events: Array, success_notices: Array[String]) -> void:
 	_cleanup_slots_for(subject)
 	subject.clear_injections()
 	subject.new_game(8600 + assertions)
@@ -414,15 +422,15 @@ func _exercise_uncertain_save_entry(subject: Node, action_name: String, trigger:
 	await _settle()
 	subject.clear_injections()
 	subject.inject("validate_committed_primary", "open")
+	battle_events.clear()
+	success_notices.clear()
 	await trigger.call(main)
 	_assert_true("validate_committed_primary.open" in subject.operation_phase_trace, "%s must reach the injected post-commit open boundary" % action_name)
-	if not subject.is_reload_required():
-		subject.save_game()
-	await _assert_and_resolve_global_recovery(main, subject, action_name, verify_retry_focus)
+	await _assert_and_resolve_global_recovery(main, subject, action_name, battle_events, success_notices)
 	main.queue_free()
 	await process_frame
 
-func _assert_and_resolve_global_recovery(main: Control, subject: Node, action_name: String, verify_retry_focus: bool = false) -> void:
+func _assert_and_resolve_global_recovery(main: Control, subject: Node, action_name: String, battle_events: Array, success_notices: Array[String]) -> void:
 	var recovery_band := main.find_child("PersistenceRecovery", true, false) as Control
 	var reload_buttons := main.find_children("ReloadAfterPersistenceBlock", "Button", true, false)
 	var reload_button := reload_buttons[0] as Button if reload_buttons.size() == 1 else null
@@ -431,21 +439,59 @@ func _assert_and_resolve_global_recovery(main: Control, subject: Node, action_na
 	_assert_equal(reload_buttons.size(), 1, "%s must expose exactly one reload command" % action_name)
 	_assert_true(recovery_band != null and recovery_band.is_visible_in_tree(), "%s must show the global recovery state on the current page" % action_name)
 	_assert_true(reload_button != null and reload_button.is_visible_in_tree(), "%s reload command must be visible and reachable" % action_name)
-	if verify_retry_focus and reload_button != null and reload_button.is_visible_in_tree():
+	var disk_snapshot := _read_snapshot_json(subject.DEFAULT_SAVE_PATH)
+	_assert_true(not disk_snapshot.is_empty(), "%s uncertain primary must remain a readable authority candidate" % action_name)
+	var disk_tick := int(disk_snapshot.get("tick", -1))
+	var disk_seed := int(disk_snapshot.get("seed", -1))
+	var shell := _find_shell(main)
+	if shell != null:
+		var map_button := _find_button_by_text(shell, "区域图")
+		_assert_true(map_button != null, "%s must expose production navigation while recovery remains global" % action_name)
+		if map_button != null:
+			await _click_same_frame(map_button)
+			await _settle()
+		var switched_buttons := main.find_children("ReloadAfterPersistenceBlock", "Button", true, false)
+		_assert_equal(switched_buttons.size(), 1, "%s page switch must retain exactly one recovery command" % action_name)
+		_assert_true(switched_buttons.size() == 1 and switched_buttons[0] == reload_button, "%s page switch must retain the Main-owned recovery command" % action_name)
+		_assert_true(recovery_band != null and recovery_band.is_visible_in_tree(), "%s page switch must keep recovery visible" % action_name)
+	if reload_button != null and reload_button.is_visible_in_tree():
 		subject.clear_injections()
 		subject.inject("load_primary", "open")
 		await _click_same_frame(reload_button)
+		_assert_true("load_primary.open" in subject.operation_phase_trace, "%s failed reload must reach the production primary-read boundary" % action_name)
 		_assert_true(subject.is_reload_required(), "%s failed reload must remain retryable" % action_name)
 		_assert_true(recovery_band.is_visible_in_tree(), "%s failed reload must keep recovery visible" % action_name)
 		_assert_true(not reload_button.disabled and root.gui_get_focus_owner() == reload_button, "%s failed reload must restore focus to the enabled reload command" % action_name)
+	else:
+		_assert_true(false, "%s must use the visible production reload command" % action_name)
+	var sentinel_tick := disk_tick + 100000
+	var sentinel_seed := disk_seed + 100000
+	if not subject.state.is_empty():
+		subject.state.tick = sentinel_tick
+		subject.state.seed = sentinel_seed
 	subject.clear_injections()
 	if reload_button != null and reload_button.is_visible_in_tree():
 		await _click_same_frame(reload_button)
 	else:
 		_assert_true(subject.load_game(), "%s fallback reload must restore disk authority" % action_name)
 	_assert_true(not subject.is_persistence_blocked() and not subject.is_reload_required(), "%s successful reload must clear the global freeze" % action_name)
+	_assert_equal(int(subject.state.get("tick", -1)), disk_tick, "%s successful reload must replace the in-memory tick sentinel with disk authority" % action_name)
+	_assert_equal(int(subject.state.get("seed", -1)), disk_seed, "%s successful reload must replace the in-memory seed sentinel with disk authority" % action_name)
+	_assert_equal(battle_events.size(), 0, "%s save failure and reload must not synthesize retreat/battle completion" % action_name)
+	_assert_equal(success_notices.size(), 0, "%s uncertain save and reload must not synthesize a successful-save notice" % action_name)
 	if recovery_band != null:
 		_assert_true(not recovery_band.visible, "%s successful reload must hide the global recovery state" % action_name)
+
+func _trigger_real_autosave(subject: Node) -> void:
+	var started_msec := Time.get_ticks_msec()
+	subject.set_process(true)
+	while Time.get_ticks_msec() - started_msec < REAL_AUTOSAVE_DEADLINE_MSEC and not ("validate_committed_primary.open" in subject.operation_phase_trace):
+		await process_frame
+	subject.set_process(false)
+	var elapsed_msec := Time.get_ticks_msec() - started_msec
+	_assert_true(elapsed_msec >= REAL_AUTOSAVE_MINIMUM_MSEC, "scheduler autosave must cross the real 30-second production interval")
+	_assert_true(elapsed_msec < REAL_AUTOSAVE_DEADLINE_MSEC, "scheduler autosave must reach the injected boundary before its bounded deadline")
+	print("RECOVERY_UI_REAL_AUTOSAVE elapsed_msec=%d boundary=%s" % [elapsed_msec, "validate_committed_primary.open" in subject.operation_phase_trace])
 
 func _instantiate_main_for(subject: Node) -> Control:
 	var main := load("res://scenes/main.tscn").instantiate() as Control

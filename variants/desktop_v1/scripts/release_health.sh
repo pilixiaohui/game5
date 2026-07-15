@@ -91,6 +91,9 @@ run_selected_gate() {
 		autosave)
 			run_gate "autosave" "${RELEASE_HEALTH_AUTOSAVE_TIMEOUT_SECONDS:-65}" "$project_root/scripts/verify_autosave_scheduler.sh"
 			;;
+		recovery-ui)
+			run_gate "recovery-ui" "${RELEASE_HEALTH_RECOVERY_UI_TIMEOUT_SECONDS:-95}" "$project_root/scripts/verify_acceptance_regressions.sh"
+			;;
 		clean-clone)
 			run_gate "clean-clone" "${RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS:-45}" "$project_root/scripts/release_health.sh" --clean-clone "$release_root" "$repo_root" "$source_head"
 			;;
@@ -125,6 +128,7 @@ run_release_gates() {
 
 	run_selected_gate isolation "$release_root" "$repo_root" "$source_head"
 	run_selected_gate autosave "$release_root" "$repo_root" "$source_head"
+	run_selected_gate recovery-ui "$release_root" "$repo_root" "$source_head"
 	run_selected_gate clean-clone "$release_root" "$repo_root" "$source_head"
 	run_selected_gate cold-start "$release_root" "$repo_root" "$source_head"
 	run_selected_gate screenshots "$release_root" "$repo_root" "$source_head"
@@ -166,4 +170,4 @@ if [[ "$overall_status" -ne 0 ]]; then
 	exit "$overall_status"
 fi
 
-echo "RELEASE_HEALTH_OK isolation_timeout=${RELEASE_HEALTH_ISOLATION_TIMEOUT_SECONDS:-120}s autosave_timeout=${RELEASE_HEALTH_AUTOSAVE_TIMEOUT_SECONDS:-65}s clone_timeout=${RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS:-45}s cold_start_timeout=${RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS:-60}s screenshots_timeout=${RELEASE_HEALTH_SCREENSHOTS_TIMEOUT_SECONDS:-110}s screenshot_inner_timeout=${RELEASE_HEALTH_SCREENSHOT_INNER_TIMEOUT_SECONDS:-90}s overall_timeout=${overall_timeout}s scratch_roots=clean-on-exit"
+echo "RELEASE_HEALTH_OK isolation_timeout=${RELEASE_HEALTH_ISOLATION_TIMEOUT_SECONDS:-120}s autosave_timeout=${RELEASE_HEALTH_AUTOSAVE_TIMEOUT_SECONDS:-65}s recovery_ui_timeout=${RELEASE_HEALTH_RECOVERY_UI_TIMEOUT_SECONDS:-95}s clone_timeout=${RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS:-45}s cold_start_timeout=${RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS:-60}s screenshots_timeout=${RELEASE_HEALTH_SCREENSHOTS_TIMEOUT_SECONDS:-110}s screenshot_inner_timeout=${RELEASE_HEALTH_SCREENSHOT_INNER_TIMEOUT_SECONDS:-90}s overall_timeout=${overall_timeout}s scratch_roots=clean-on-exit"

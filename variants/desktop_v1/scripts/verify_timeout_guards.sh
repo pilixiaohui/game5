@@ -190,13 +190,14 @@ screenshot_leader_parent="$test_root/screenshot-leader-parent"
 expect_screenshot_leader_exit_cleanup "$screenshot_leader_parent" "$screenshot_project" "$test_root/screenshot-leader.pid"
 
 release_parent="$test_root/release-parent"
-for gate_name in isolation autosave clean-clone cold-start screenshots; do
+for gate_name in isolation autosave recovery-ui clean-clone cold-start screenshots; do
 	expect_timeout "release-$gate_name" "$release_parent" "$test_root/release-$gate_name.pid" \
 		env \
 			RELEASE_HEALTH_SCRATCH_PARENT="$release_parent" \
 			RELEASE_HEALTH_OVERALL_TIMEOUT_SECONDS=6 \
 			RELEASE_HEALTH_ISOLATION_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_AUTOSAVE_TIMEOUT_SECONDS=1 \
+			RELEASE_HEALTH_RECOVERY_UI_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_SCREENSHOTS_TIMEOUT_SECONDS=1 \
@@ -222,4 +223,4 @@ expect_timeout release-overall "$release_parent" "$test_root/release-overall.pid
 		HANG_PID_FILE="$test_root/release-overall.pid" \
 		./scripts/release_health.sh
 
-echo "TIMEOUT_GUARDS_OK normal=clean leader_exit=clean timeout=bounded term=clean screenshot_nested_timeout=bounded screenshot_leader_exit=clean release_subgates=5 overall=bounded pgids=reaped scratch_roots=clean"
+echo "TIMEOUT_GUARDS_OK normal=clean leader_exit=clean timeout=bounded term=clean screenshot_nested_timeout=bounded screenshot_leader_exit=clean release_subgates=6 overall=bounded pgids=reaped scratch_roots=clean"
