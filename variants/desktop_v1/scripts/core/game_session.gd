@@ -245,12 +245,13 @@ var _accumulator := 0.0
 var _autosave_elapsed := 0.0
 var _persistence_blocked := false
 var _last_load_error := ""
+var _decision_pauses := {}
 
 func _ready() -> void:
 	set_process(true)
 
 func _process(delta: float) -> void:
-	if _persistence_blocked or state.is_empty() or not state.get("running", false) or state.get("paused", false):
+	if _persistence_blocked or not _decision_pauses.is_empty() or state.is_empty() or not state.get("running", false) or state.get("paused", false):
 		return
 	_accumulator += delta * float(state.get("speed", 1))
 	_autosave_elapsed += delta
@@ -266,6 +267,7 @@ func _process(delta: float) -> void:
 func new_game(seed_value: int = 0) -> void:
 	_persistence_blocked = false
 	_last_load_error = ""
+	_decision_pauses.clear()
 	_accumulator = 0.0
 	_autosave_elapsed = 0.0
 	var actual_seed := seed_value if seed_value != 0 else int(Time.get_unix_time_from_system())
@@ -347,6 +349,14 @@ func set_speed(value: int) -> void:
 func set_paused(value: bool) -> void:
 	state["paused"] = value
 	_emit_change()
+
+func set_decision_pause(source: String, value: bool) -> void:
+	if source.is_empty():
+		return
+	if value:
+		_decision_pauses[source] = true
+	else:
+		_decision_pauses.erase(source)
 
 func build_room(slot: int, kind: String) -> bool:
 	if not ROOM_DEFS.has(kind) or slot < 0 or slot >= state.rooms.size():

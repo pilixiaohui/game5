@@ -143,7 +143,7 @@ term_parent="$test_root/term-parent"
 expect_term_cleanup "$term_parent" "$test_root/term.pid"
 
 release_parent="$test_root/release-parent"
-for gate_name in isolation autosave clean-clone cold-start; do
+for gate_name in isolation autosave clean-clone cold-start screenshots; do
 	expect_timeout "release-$gate_name" "$release_parent" "$test_root/release-$gate_name.pid" \
 		env \
 			RELEASE_HEALTH_SCRATCH_PARENT="$release_parent" \
@@ -152,6 +152,7 @@ for gate_name in isolation autosave clean-clone cold-start; do
 			RELEASE_HEALTH_AUTOSAVE_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS=1 \
+			RELEASE_HEALTH_SCREENSHOTS_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_KILL_AFTER_SECONDS=1 \
 			RELEASE_HEALTH_TEST_ONLY_GATE="$gate_name" \
 			RELEASE_HEALTH_TEST_HANG_GATE="$gate_name" \
@@ -174,4 +175,4 @@ expect_timeout release-overall "$release_parent" "$test_root/release-overall.pid
 		HANG_PID_FILE="$test_root/release-overall.pid" \
 		./scripts/release_health.sh
 
-echo "TIMEOUT_GUARDS_OK normal=clean leader_exit=clean timeout=bounded term=clean release_subgates=4 overall=bounded pgids=reaped scratch_roots=clean"
+echo "TIMEOUT_GUARDS_OK normal=clean leader_exit=clean timeout=bounded term=clean release_subgates=5 overall=bounded pgids=reaped scratch_roots=clean"

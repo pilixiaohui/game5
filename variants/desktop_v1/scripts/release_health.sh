@@ -33,6 +33,29 @@ run_cold_start() {
 	fi
 }
 
+run_screenshots() {
+	local release_root="$1"
+	local clean_project="$release_root/clean-clone/variants/desktop_v1"
+	local screenshot_log="$release_root/screenshots.log"
+	local status=0
+	env \
+		HOME="$release_root/screenshot-home" \
+		XDG_CONFIG_HOME="$release_root/screenshot-config" \
+		XDG_CACHE_HOME="$release_root/screenshot-cache" \
+		XDG_DATA_HOME="$release_root/screenshot-data" \
+		godot4 --headless --path "$clean_project" -s res://tests/screenshot_runner.gd >"$screenshot_log" 2>&1 || status=$?
+	cat "$screenshot_log"
+	if [[ "$status" -ne 0 ]]; then
+		return "$status"
+	fi
+	local screenshot_count
+	screenshot_count="$(find "$clean_project/screenshots" -maxdepth 1 -type f -name '*.png' | wc -l)"
+	if [[ "$screenshot_count" -ne 6 ]]; then
+		echo "Screenshot gate produced $screenshot_count images instead of 6." >&2
+		return 1
+	fi
+}
+
 if [[ "${1:-}" == "--clean-clone" ]]; then
 	run_clean_clone "$2" "$3" "$4"
 	exit $?
@@ -40,6 +63,11 @@ fi
 
 if [[ "${1:-}" == "--cold-start" ]]; then
 	run_cold_start "$2"
+	exit $?
+fi
+
+if [[ "${1:-}" == "--screenshots" ]]; then
+	run_screenshots "$2"
 	exit $?
 fi
 
@@ -81,6 +109,9 @@ run_selected_gate() {
 		cold-start)
 			run_gate "cold-start" "${RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS:-60}" "$project_root/scripts/release_health.sh" --cold-start "$release_root"
 			;;
+		screenshots)
+			run_gate "screenshots" "${RELEASE_HEALTH_SCREENSHOTS_TIMEOUT_SECONDS:-90}" "$project_root/scripts/release_health.sh" --screenshots "$release_root"
+			;;
 		*)
 			echo "Unknown release-health gate: $gate_name" >&2
 			return 2
@@ -108,6 +139,7 @@ run_release_gates() {
 	run_selected_gate autosave "$release_root" "$repo_root" "$source_head"
 	run_selected_gate clean-clone "$release_root" "$repo_root" "$source_head"
 	run_selected_gate cold-start "$release_root" "$repo_root" "$source_head"
+	run_selected_gate screenshots "$release_root" "$repo_root" "$source_head"
 }
 
 if [[ "${1:-}" == "--run-gates" ]]; then
@@ -128,7 +160,7 @@ trap cleanup_release_health EXIT
 trap 'exit 143' TERM INT
 release_root="$(mktemp -d "$scratch_parent/xenogenesis-release-work.XXXXXX")"
 overall_log="$control_root/release-health.log"
-overall_timeout="${RELEASE_HEALTH_OVERALL_TIMEOUT_SECONDS:-300}"
+overall_timeout="${RELEASE_HEALTH_OVERALL_TIMEOUT_SECONDS:-420}"
 overall_command=("$project_root/scripts/release_health.sh" --run-gates "$release_root")
 if [[ "${RELEASE_HEALTH_TEST_HANG_GATE:-}" == "overall" ]]; then
 	if [[ -z "${RELEASE_HEALTH_TEST_HANG_COMMAND:-}" ]]; then
@@ -146,4 +178,4 @@ if [[ "$overall_status" -ne 0 ]]; then
 	exit "$overall_status"
 fi
 
-echo "RELEASE_HEALTH_OK isolation_timeout=${RELEASE_HEALTH_ISOLATION_TIMEOUT_SECONDS:-120}s autosave_timeout=${RELEASE_HEALTH_AUTOSAVE_TIMEOUT_SECONDS:-65}s clone_timeout=${RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS:-45}s cold_start_timeout=${RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS:-60}s overall_timeout=${overall_timeout}s scratch_roots=clean-on-exit"
+echo "RELEASE_HEALTH_OK isolation_timeout=${RELEASE_HEALTH_ISOLATION_TIMEOUT_SECONDS:-120}s autosave_timeout=${RELEASE_HEALTH_AUTOSAVE_TIMEOUT_SECONDS:-65}s clone_timeout=${RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS:-45}s cold_start_timeout=${RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS:-60}s screenshots_timeout=${RELEASE_HEALTH_SCREENSHOTS_TIMEOUT_SECONDS:-90}s overall_timeout=${overall_timeout}s scratch_roots=clean-on-exit"

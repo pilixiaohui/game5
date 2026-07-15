@@ -36,15 +36,23 @@ func _rebuild() -> void:
 	if preview.is_empty():
 		return
 	var point_band := PanelContainer.new()
+	point_band.custom_minimum_size.y = 86
 	content.add_child(point_band)
 	var point_row := HBoxContainer.new()
+	point_row.add_theme_constant_override("separation", 18)
 	point_band.add_child(point_row)
 	var copy := VBoxContainer.new()
 	copy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	copy.add_child(UI.label("预计飞升点", "Section"))
 	copy.add_child(UI.label("来自当前存档同一权威快照", "Muted"))
 	point_row.add_child(copy)
-	point_row.add_child(UI.label(str(preview.points), "Title"))
+	var point_total := UI.label(str(preview.points), "Title")
+	point_total.name = "AscensionPointTotal"
+	point_total.autowrap_mode = TextServer.AUTOWRAP_OFF
+	point_total.custom_minimum_size = Vector2(128, 48)
+	point_total.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	point_total.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	point_row.add_child(point_total)
 	var contribution_grid := GridContainer.new()
 	contribution_grid.columns = 6
 	contribution_grid.add_theme_constant_override("h_separation", 8)

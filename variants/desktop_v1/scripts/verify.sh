@@ -12,6 +12,8 @@ export XDG_DATA_HOME="$test_root/data"
 godot4 --headless --editor --path . --quit
 ./scripts/verify_persistence_io_contract.sh
 godot4 --headless --path . -s res://tests/test_runner.gd
+./scripts/verify_acceptance_regressions.sh
+godot4 --headless --path . -s res://tests/screenshot_runner.gd
 ./scripts/verify_save_process.sh
 ./scripts/verify_primary_read_io.sh
 godot4 --headless --path . -s res://tests/persistence_guard_runner.gd -- "--scratch-data-root=$test_root/data"

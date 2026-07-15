@@ -2,6 +2,7 @@ extends VBoxContainer
 
 const UI = preload("res://scripts/ui/ui_utils.gd")
 const BattleCanvas = preload("res://scripts/ui/battle_canvas.gd")
+const RETREAT_DECISION_PAUSE := "retreat_confirmation"
 
 var snapshot: Dictionary = {}
 var canvas: Control
@@ -11,6 +12,8 @@ var retreat_button: Button
 var confirm_band: PanelContainer
 
 func _ready() -> void:
+	set_process_unhandled_input(true)
+	visibility_changed.connect(_on_visibility_changed)
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
 	add_theme_constant_override("separation", 10)
@@ -20,6 +23,7 @@ func _ready() -> void:
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
 	retreat_button = UI.button("撤离", _show_retreat_confirm, "DangerButton")
+	retreat_button.name = "RetreatButton"
 	header.add_child(retreat_button)
 	add_child(UI.label("画面代表只投影真实批次；代表数量、动画与帧率不会参与结算。", "Muted"))
 	var canvas_panel := PanelContainer.new()
@@ -31,6 +35,7 @@ func _ready() -> void:
 	metrics.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	add_child(metrics)
 	confirm_band = PanelContainer.new()
+	confirm_band.name = "RetreatConfirmation"
 	confirm_band.visible = false
 	add_child(confirm_band)
 	var confirm_row := HBoxContainer.new()
@@ -38,8 +43,12 @@ func _ready() -> void:
 	var warning := UI.label("撤离在下一合法边界原子提交；确认后不可取消。", "Warning")
 	warning.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	confirm_row.add_child(warning)
-	confirm_row.add_child(UI.button("关闭", _hide_retreat_confirm))
-	confirm_row.add_child(UI.button("确认撤离", _confirm_retreat, "DangerButton"))
+	var close_button := UI.button("关闭", _hide_retreat_confirm)
+	close_button.name = "CancelRetreatButton"
+	confirm_row.add_child(close_button)
+	var confirm_button := UI.button("确认撤离", _confirm_retreat, "DangerButton")
+	confirm_button.name = "ConfirmRetreatButton"
+	confirm_row.add_child(confirm_button)
 
 func set_snapshot(value: Dictionary) -> void:
 	snapshot = value
@@ -51,18 +60,39 @@ func set_snapshot(value: Dictionary) -> void:
 	if battle.is_empty():
 		title.text = "长战场 · 当前无主动战役"
 		metrics.text = "从区域图选择一个可观察节点提交进攻"
-		confirm_band.visible = false
+		_hide_retreat_confirm(false)
 	else:
 		var node := GameSession.node_by_id(battle.node_id)
 		title.text = "%s · %s" % [battle.node_id, node.name]
 		metrics.text = "噬咬体 %d   根脉孢体 %d   留置菌毯 %d     敌军 %d   结构 %d     歼灭 %d   战损 %d" % [battle.biter, battle.spore, battle.roots, battle.enemy, battle.structure_hp, battle.kills, battle.losses]
 
 func _show_retreat_confirm() -> void:
+	if confirm_band.visible or snapshot.active_battle.is_empty():
+		return
+	GameSession.set_decision_pause(RETREAT_DECISION_PAUSE, true)
 	confirm_band.visible = true
+	var cancel := confirm_band.find_child("CancelRetreatButton", true, false) as Button
+	if cancel:
+		cancel.grab_focus()
 
-func _hide_retreat_confirm() -> void:
+func _hide_retreat_confirm(restore_focus: bool = true) -> void:
+	GameSession.set_decision_pause(RETREAT_DECISION_PAUSE, false)
 	confirm_band.visible = false
+	if restore_focus and is_instance_valid(retreat_button) and retreat_button.is_visible_in_tree():
+		retreat_button.grab_focus()
 
 func _confirm_retreat() -> void:
-	if GameSession.retreat():
-		confirm_band.visible = false
+	GameSession.retreat()
+	_hide_retreat_confirm()
+
+func _on_visibility_changed() -> void:
+	if not is_visible_in_tree() and is_instance_valid(confirm_band) and confirm_band.visible:
+		_hide_retreat_confirm(false)
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("ui_cancel") and is_instance_valid(confirm_band) and confirm_band.visible:
+		_hide_retreat_confirm()
+		get_viewport().set_input_as_handled()
+
+func _exit_tree() -> void:
+	GameSession.set_decision_pause(RETREAT_DECISION_PAUSE, false)

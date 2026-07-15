@@ -27,7 +27,7 @@ static func build() -> Theme:
 	theme.set_color("font_hover_color", "Button", Color.WHITE)
 	theme.set_color("font_pressed_color", "Button", BG)
 	theme.set_color("font_disabled_color", "Button", Color(MUTED, 0.52))
-	theme.set_font_size("font_size", "Button", 15)
+	theme.set_font_size("font_size", "Button", 16)
 	theme.set_stylebox("normal", "Button", _box(SURFACE_ALT, BORDER, 1, 6, 10))
 	theme.set_stylebox("hover", "Button", _box(Color("193137"), CYAN, 1, 6, 10))
 	theme.set_stylebox("pressed", "Button", _box(GREEN, GREEN, 1, 6, 10))
