@@ -505,7 +505,7 @@ screenshot_leader_parent="$test_root/screenshot-leader-parent"
 expect_screenshot_leader_exit_cleanup "$screenshot_leader_parent" "$screenshot_project" "$test_root/screenshot-leader.pid"
 
 release_parent="$test_root/release-parent"
-for gate_name in isolation autosave recovery-ui transaction-reconciliation capture-atomic timeout-guards clean-clone cold-import cold-start screenshots; do
+for gate_name in isolation autosave recovery-ui transaction-reconciliation capture-lock-wait capture-atomic timeout-owner-records timeout-guards clean-clone cold-import cold-start screenshots; do
 	expect_timeout "release-$gate_name" "$release_parent" "$test_root/release-$gate_name.pid" \
 		env \
 			RELEASE_HEALTH_SCRATCH_PARENT="$release_parent" \
@@ -514,7 +514,9 @@ for gate_name in isolation autosave recovery-ui transaction-reconciliation captu
 			RELEASE_HEALTH_AUTOSAVE_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_RECOVERY_UI_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_TRANSACTION_TIMEOUT_SECONDS=1 \
+			RELEASE_HEALTH_CAPTURE_LOCK_WAIT_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_CAPTURE_ATOMIC_TIMEOUT_SECONDS=1 \
+			RELEASE_HEALTH_TIMEOUT_OWNER_RECORDS_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_TIMEOUT_GUARDS_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_COLD_IMPORT_TIMEOUT_SECONDS=1 \
@@ -581,4 +583,4 @@ if [[ "${#HARD_TIMEOUT_ACTIVE_PIDS[@]}" -ne 0 ]] || \
 	exit 1
 fi
 guards_complete=1
-echo "TIMEOUT_GUARDS_OK registry_prespan=fail-closed registration_failure=reaped identity=boot,pidns,starttime stale=discarded leaderless_reused_pgid=discarded graph=iterative-bounded normal=clean supervisor_leader_exit=clean timeout=bounded term=clean kill=bounded release_cold_import_term=clean screenshot_nested_timeout=bounded screenshot_leader_exit=clean release_screenshots_continuous=2 release_screenshots_concurrent=2 release_subgates=10 overall=bounded pids=reaped pgids=reaped scratch_roots=clean"
+echo "TIMEOUT_GUARDS_OK registry_prespan=fail-closed registration_failure=reaped identity=boot,pidns,starttime stale=discarded leaderless_reused_pgid=discarded graph=iterative-bounded normal=clean supervisor_leader_exit=clean timeout=bounded term=clean kill=bounded release_cold_import_term=clean screenshot_nested_timeout=bounded screenshot_leader_exit=clean release_screenshots_continuous=2 release_screenshots_concurrent=2 release_subgates=12 overall=bounded pids=reaped pgids=reaped scratch_roots=clean"

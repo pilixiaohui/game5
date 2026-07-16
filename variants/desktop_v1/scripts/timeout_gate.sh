@@ -98,6 +98,21 @@ process_identity_matches() {
 	[[ "$actual" == "$expected_boot $expected_namespace $expected_start" ]]
 }
 
+timeout_identity_confirmed_gone() {
+	local pid="$1"
+	local expected_boot="$2"
+	local expected_namespace="$3"
+	local expected_start="$4"
+	if [[ ! -d "/proc/$pid" ]]; then
+		return 0
+	fi
+	local actual=""
+	if ! actual="$(read_process_identity "$pid")"; then
+		return 2
+	fi
+	[[ "$actual" != "$expected_boot $expected_namespace $expected_start" ]]
+}
+
 group_identity_matches() {
 	local leader_pid="$1"
 	local pgid="$2"
@@ -262,6 +277,10 @@ terminate_timeout_identity() {
 		echo "Discarded stale timeout identity before TERM: pid=$pid pgid=$pgid" >&2
 		return 2
 	fi
+	if [[ "${HARD_TIMEOUT_TEST_TERMINATION_FAILURE_PID:-}" == "$pid" ]]; then
+		echo "Injected timeout termination failure before TERM: pid=$pid pgid=$pgid" >&2
+		return 1
+	fi
 	kill -TERM -- "-$pgid" 2>/dev/null || true
 	if wait_for_timeout_group_members_exit "$pid" "$pgid" "$grace_seconds"; then
 		if ! process_identity_matches "$pid" "$boot_id" "$pid_namespace" "$start_time"; then
@@ -423,7 +442,6 @@ cleanup_registered_timeout_descendants() {
 		fi
 		if [[ "$record_status" -ne 0 ]]; then
 			echo "Malformed timeout registry record: $record" >&2
-			rm -f "$record"
 			return 1
 		fi
 		parsed_record_paths+=("$record")
@@ -470,12 +488,20 @@ cleanup_registered_timeout_descendants() {
 	local selection_index
 	for ((selection_index = ${#selected[@]} - 1; selection_index >= 0; selection_index -= 1)); do
 		child_index="${selected[$selection_index]}"
-		if ! terminate_timeout_identity \
+		local termination_status=0
+		terminate_timeout_identity \
 			"${pids[$child_index]}" "${pgids[$child_index]}" "${boots[$child_index]}" \
-			"${namespaces[$child_index]}" "${starts[$child_index]}" "$grace_seconds"; then
+			"${namespaces[$child_index]}" "${starts[$child_index]}" "$grace_seconds" || termination_status=$?
+		if [[ "$termination_status" -eq 0 ]]; then
+			rm -f "${parsed_record_paths[$child_index]}"
+		elif timeout_identity_confirmed_gone \
+			"${pids[$child_index]}" "${boots[$child_index]}" \
+			"${namespaces[$child_index]}" "${starts[$child_index]}"; then
+			rm -f "${parsed_record_paths[$child_index]}"
+			cleanup_status=1
+		else
 			cleanup_status=1
 		fi
-		rm -f "${parsed_record_paths[$child_index]}"
 	done
 	return "$cleanup_status"
 }
@@ -492,10 +518,21 @@ cleanup_hard_timeout_processes() {
 	local index
 	for ((index = 0; index < ${#active_pids[@]}; index += 1)); do
 		cleanup_registered_timeout_descendants "${active_pids[$index]}" "${active_starts[$index]}" "$grace_seconds" || cleanup_status=1
+		local termination_status=0
 		terminate_timeout_identity "${active_pids[$index]}" "${active_pgids[$index]}" \
-			"${active_boots[$index]}" "${active_namespaces[$index]}" "${active_starts[$index]}" "$grace_seconds" || cleanup_status=1
-		rm -f "${active_records[$index]}"
-		remove_active_timeout "${active_pids[$index]}"
+			"${active_boots[$index]}" "${active_namespaces[$index]}" "${active_starts[$index]}" "$grace_seconds" || termination_status=$?
+		if [[ "$termination_status" -eq 0 ]]; then
+			rm -f "${active_records[$index]}"
+			remove_active_timeout "${active_pids[$index]}"
+		elif timeout_identity_confirmed_gone \
+			"${active_pids[$index]}" "${active_boots[$index]}" \
+			"${active_namespaces[$index]}" "${active_starts[$index]}"; then
+			rm -f "${active_records[$index]}"
+			remove_active_timeout "${active_pids[$index]}"
+			cleanup_status=1
+		else
+			cleanup_status=1
+		fi
 	done
 
 	if [[ "${HARD_TIMEOUT_REGISTRY_OWNER_PID:-}" == "$BASHPID" && -d "${HARD_TIMEOUT_REGISTRY_ROOT:-}" ]]; then
@@ -510,18 +547,40 @@ cleanup_hard_timeout_processes() {
 			fi
 			if [[ "$record_status" -ne 0 ]]; then
 				echo "Malformed timeout registry record during owner cleanup: $record" >&2
-				rm -f "$record"
 				cleanup_status=1
 				continue
 			fi
-			cleanup_registered_timeout_descendants "$TIMEOUT_RECORD_PID" "$TIMEOUT_RECORD_START_TIME" "$grace_seconds" || cleanup_status=1
-			terminate_timeout_identity "$TIMEOUT_RECORD_PID" "$TIMEOUT_RECORD_PGID" \
-				"$TIMEOUT_RECORD_BOOT_ID" "$TIMEOUT_RECORD_PID_NAMESPACE" "$TIMEOUT_RECORD_START_TIME" "$grace_seconds" || cleanup_status=1
-			rm -f "$record"
+			# Descendant traversal parses every record, so freeze this record's
+			# identity before any nested parser call can overwrite TIMEOUT_RECORD_*.
+			local record_pid="$TIMEOUT_RECORD_PID"
+			local record_pgid="$TIMEOUT_RECORD_PGID"
+			local record_boot="$TIMEOUT_RECORD_BOOT_ID"
+			local record_namespace="$TIMEOUT_RECORD_PID_NAMESPACE"
+			local record_start="$TIMEOUT_RECORD_START_TIME"
+			cleanup_registered_timeout_descendants "$record_pid" "$record_start" "$grace_seconds" || cleanup_status=1
+			local termination_status=0
+			terminate_timeout_identity "$record_pid" "$record_pgid" \
+				"$record_boot" "$record_namespace" "$record_start" "$grace_seconds" || termination_status=$?
+			if [[ "$termination_status" -eq 0 ]]; then
+				rm -f "$record"
+			elif timeout_identity_confirmed_gone "$record_pid" "$record_boot" "$record_namespace" "$record_start"; then
+				rm -f "$record"
+				cleanup_status=1
+			else
+				cleanup_status=1
+			fi
 		done
-		if [[ "$cleanup_status" -eq 0 ]]; then
-			rm -rf "$HARD_TIMEOUT_REGISTRY_ROOT"
-			unset HARD_TIMEOUT_REGISTRY_ROOT HARD_TIMEOUT_REGISTRY_OWNER_PID
+		local remaining_record_count=0
+		remaining_record_count="$(find "$HARD_TIMEOUT_REGISTRY_ROOT" -mindepth 1 -maxdepth 1 -type f -name '*.record' | wc -l)"
+		if [[ "$remaining_record_count" -eq 0 && "${#HARD_TIMEOUT_ACTIVE_PIDS[@]}" -eq 0 ]]; then
+			find "$HARD_TIMEOUT_REGISTRY_ROOT" -mindepth 1 -maxdepth 1 -type f \
+				\( -name '.spawn.*' -o -name '.handshake.*' -o -name '.record.*' \) -delete
+			if rmdir "$HARD_TIMEOUT_REGISTRY_ROOT"; then
+				unset HARD_TIMEOUT_REGISTRY_ROOT HARD_TIMEOUT_REGISTRY_OWNER_PID
+			else
+				echo "Timeout registry retained because unknown entries remain: $HARD_TIMEOUT_REGISTRY_ROOT" >&2
+				cleanup_status=1
+			fi
 		fi
 	fi
 	return "$cleanup_status"

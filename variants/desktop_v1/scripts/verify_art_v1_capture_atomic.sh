@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+gate_mode="${1:---all}"
+case "$gate_mode" in
+	--all|--lock-wait-only|--skip-lock-wait) ;;
+	*)
+		echo "Unknown capture atomic gate mode: $gate_mode" >&2
+		exit 2
+		;;
+esac
+
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$project_root/scripts/timeout_gate.sh"
 fixture="$project_root/tests/art_v1_capture_fixture.sh"
@@ -357,7 +366,16 @@ if [[ "$(wc -l < "$baseline")" -ne 15 ]]; then
 	exit 1
 fi
 
-run_capture_lock_contention_cases
+lock_wait_interruptions=0
+if [[ "$gate_mode" != "--skip-lock-wait" ]]; then
+	run_capture_lock_contention_cases
+	lock_wait_interruptions=2
+fi
+if [[ "$gate_mode" == "--lock-wait-only" ]]; then
+	gate_complete=1
+	echo "VERIFY_ART_V1_CAPTURE_LOCK_WAIT_OK interruptions=2 committed=unchanged processes=gone scratch=clean"
+	exit 0
+fi
 exec {capture_gate_lock_fd}<"$output_parent"
 flock -x "$capture_gate_lock_fd"
 export ART_V1_CAPTURE_LOCK_HELD=1
@@ -379,4 +397,4 @@ run_transaction_fault rollback-quarantine new 5
 run_transaction_fault rollback-partial-delete new 6
 
 gate_complete=1
-echo "VERIFY_ART_V1_CAPTURE_ATOMIC_OK lock_wait_interruptions=2 precommit_cases=8 transaction_faults=6 files=15 fingerprints=path,sha256,size,mtime_ns generations=old-or-new capture_root=canonical-owned-exact-regular processes=gone scratch=clean"
+echo "VERIFY_ART_V1_CAPTURE_ATOMIC_OK lock_wait_interruptions=$lock_wait_interruptions precommit_cases=8 transaction_faults=6 files=15 fingerprints=path,sha256,size,mtime_ns generations=old-or-new capture_root=canonical-owned-exact-regular processes=gone scratch=clean"

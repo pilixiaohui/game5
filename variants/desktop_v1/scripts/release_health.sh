@@ -153,8 +153,14 @@ run_selected_gate() {
 		transaction-reconciliation)
 			run_gate "transaction-reconciliation" "${RELEASE_HEALTH_TRANSACTION_TIMEOUT_SECONDS:-45}" "$project_root/scripts/verify_transaction_reconciliation.sh"
 			;;
+		capture-lock-wait)
+			run_gate "capture-lock-wait" "${RELEASE_HEALTH_CAPTURE_LOCK_WAIT_TIMEOUT_SECONDS:-10}" "$project_root/scripts/verify_art_v1_capture_lock_wait.sh"
+			;;
 		capture-atomic)
-			run_gate "capture-atomic" "${RELEASE_HEALTH_CAPTURE_ATOMIC_TIMEOUT_SECONDS:-30}" "$project_root/scripts/verify_art_v1_capture_atomic.sh"
+			run_gate "capture-atomic" "${RELEASE_HEALTH_CAPTURE_ATOMIC_TIMEOUT_SECONDS:-30}" "$project_root/scripts/verify_art_v1_capture_atomic.sh" --skip-lock-wait
+			;;
+		timeout-owner-records)
+			run_gate "timeout-owner-records" "${RELEASE_HEALTH_TIMEOUT_OWNER_RECORDS_TIMEOUT_SECONDS:-10}" "$project_root/scripts/verify_timeout_owner_records.sh"
 			;;
 		timeout-guards)
 			run_gate "timeout-guards" "${RELEASE_HEALTH_TIMEOUT_GUARDS_TIMEOUT_SECONDS:-55}" "$project_root/scripts/verify_timeout_guards.sh"
@@ -198,7 +204,9 @@ run_release_gates() {
 	run_selected_gate autosave "$release_root" "$repo_root" "$source_head"
 	run_selected_gate recovery-ui "$release_root" "$repo_root" "$source_head"
 	run_selected_gate transaction-reconciliation "$release_root" "$repo_root" "$source_head"
+	run_selected_gate capture-lock-wait "$release_root" "$repo_root" "$source_head"
 	run_selected_gate capture-atomic "$release_root" "$repo_root" "$source_head"
+	run_selected_gate timeout-owner-records "$release_root" "$repo_root" "$source_head"
 	run_selected_gate timeout-guards "$release_root" "$repo_root" "$source_head"
 	run_selected_gate clean-clone "$release_root" "$repo_root" "$source_head"
 	run_selected_gate cold-import "$release_root" "$repo_root" "$source_head"
@@ -242,4 +250,4 @@ if [[ "$overall_status" -ne 0 ]]; then
 	exit "$overall_status"
 fi
 
-echo "RELEASE_HEALTH_OK isolation_timeout=${RELEASE_HEALTH_ISOLATION_TIMEOUT_SECONDS:-180}s autosave_timeout=${RELEASE_HEALTH_AUTOSAVE_TIMEOUT_SECONDS:-65}s recovery_ui_timeout=${RELEASE_HEALTH_RECOVERY_UI_TIMEOUT_SECONDS:-95}s transaction_timeout=${RELEASE_HEALTH_TRANSACTION_TIMEOUT_SECONDS:-45}s capture_atomic_timeout=${RELEASE_HEALTH_CAPTURE_ATOMIC_TIMEOUT_SECONDS:-30}s timeout_guards_timeout=${RELEASE_HEALTH_TIMEOUT_GUARDS_TIMEOUT_SECONDS:-55}s clone_timeout=${RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS:-45}s cold_import_timeout=${RELEASE_HEALTH_COLD_IMPORT_TIMEOUT_SECONDS:-40}s cold_start_timeout=${RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS:-25}s screenshots_timeout=${RELEASE_HEALTH_SCREENSHOTS_TIMEOUT_SECONDS:-110}s screenshot_inner_timeout=${RELEASE_HEALTH_SCREENSHOT_INNER_TIMEOUT_SECONDS:-90}s overall_timeout=${overall_timeout}s scratch_roots=clean-on-exit"
+echo "RELEASE_HEALTH_OK isolation_timeout=${RELEASE_HEALTH_ISOLATION_TIMEOUT_SECONDS:-180}s autosave_timeout=${RELEASE_HEALTH_AUTOSAVE_TIMEOUT_SECONDS:-65}s recovery_ui_timeout=${RELEASE_HEALTH_RECOVERY_UI_TIMEOUT_SECONDS:-95}s transaction_timeout=${RELEASE_HEALTH_TRANSACTION_TIMEOUT_SECONDS:-45}s capture_lock_wait_timeout=${RELEASE_HEALTH_CAPTURE_LOCK_WAIT_TIMEOUT_SECONDS:-10}s capture_atomic_timeout=${RELEASE_HEALTH_CAPTURE_ATOMIC_TIMEOUT_SECONDS:-30}s timeout_owner_records_timeout=${RELEASE_HEALTH_TIMEOUT_OWNER_RECORDS_TIMEOUT_SECONDS:-10}s timeout_guards_timeout=${RELEASE_HEALTH_TIMEOUT_GUARDS_TIMEOUT_SECONDS:-55}s clone_timeout=${RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS:-45}s cold_import_timeout=${RELEASE_HEALTH_COLD_IMPORT_TIMEOUT_SECONDS:-40}s cold_start_timeout=${RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS:-25}s screenshots_timeout=${RELEASE_HEALTH_SCREENSHOTS_TIMEOUT_SECONDS:-110}s screenshot_inner_timeout=${RELEASE_HEALTH_SCREENSHOT_INNER_TIMEOUT_SECONDS:-90}s overall_timeout=${overall_timeout}s scratch_roots=clean-on-exit"

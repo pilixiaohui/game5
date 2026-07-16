@@ -13,7 +13,9 @@ godot4 --headless --editor --path . --quit
 ./scripts/verify_persistence_io_contract.sh
 ./scripts/verify_screenshot_contract.sh
 if [[ "${VERIFY_RELEASE_SPLIT_GATES:-0}" != "1" ]]; then
-	./scripts/verify_art_v1_capture_atomic.sh
+	./scripts/verify_art_v1_capture_lock_wait.sh
+	./scripts/verify_art_v1_capture_atomic.sh --skip-lock-wait
+	./scripts/verify_timeout_owner_records.sh
 fi
 ./scripts/verify_cold_import.sh
 godot4 --headless --path . -s res://tests/test_runner.gd
