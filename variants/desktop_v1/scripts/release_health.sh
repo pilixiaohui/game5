@@ -140,30 +140,31 @@ run_selected_gate() {
 	local release_root="$2"
 	local repo_root="$3"
 	local source_head="$4"
+	local clean_project="$release_root/clean-clone/variants/desktop_v1"
 	case "$gate_name" in
 		isolation)
-			run_gate "isolation" "${RELEASE_HEALTH_ISOLATION_TIMEOUT_SECONDS:-180}" env VERIFY_RELEASE_SPLIT_GATES=1 "$project_root/scripts/verify_isolation.sh"
+			run_gate "isolation" "${RELEASE_HEALTH_ISOLATION_TIMEOUT_SECONDS:-180}" env --chdir="$clean_project" "$clean_project/scripts/verify_isolation.sh"
 			;;
 		autosave)
-			run_gate "autosave" "${RELEASE_HEALTH_AUTOSAVE_TIMEOUT_SECONDS:-65}" "$project_root/scripts/verify_autosave_scheduler.sh"
+			run_gate "autosave" "${RELEASE_HEALTH_AUTOSAVE_TIMEOUT_SECONDS:-65}" env --chdir="$clean_project" "$clean_project/scripts/verify_autosave_scheduler.sh"
 			;;
 		recovery-ui)
-			run_gate "recovery-ui" "${RELEASE_HEALTH_RECOVERY_UI_TIMEOUT_SECONDS:-95}" "$project_root/scripts/verify_acceptance_regressions.sh"
+			run_gate "recovery-ui" "${RELEASE_HEALTH_RECOVERY_UI_TIMEOUT_SECONDS:-95}" env --chdir="$clean_project" "$clean_project/scripts/verify_acceptance_regressions.sh"
 			;;
 		transaction-reconciliation)
-			run_gate "transaction-reconciliation" "${RELEASE_HEALTH_TRANSACTION_TIMEOUT_SECONDS:-45}" "$project_root/scripts/verify_transaction_reconciliation.sh"
+			run_gate "transaction-reconciliation" "${RELEASE_HEALTH_TRANSACTION_TIMEOUT_SECONDS:-45}" env --chdir="$clean_project" "$clean_project/scripts/verify_transaction_reconciliation.sh"
 			;;
 		capture-lock-wait)
-			run_gate "capture-lock-wait" "${RELEASE_HEALTH_CAPTURE_LOCK_WAIT_TIMEOUT_SECONDS:-10}" "$project_root/scripts/verify_art_v1_capture_lock_wait.sh"
+			run_gate "capture-lock-wait" "${RELEASE_HEALTH_CAPTURE_LOCK_WAIT_TIMEOUT_SECONDS:-10}" env --chdir="$clean_project" "$clean_project/scripts/verify_art_v1_capture_lock_wait.sh"
 			;;
 		capture-atomic)
-			run_gate "capture-atomic" "${RELEASE_HEALTH_CAPTURE_ATOMIC_TIMEOUT_SECONDS:-30}" "$project_root/scripts/verify_art_v1_capture_atomic.sh" --skip-lock-wait
+			run_gate "capture-atomic" "${RELEASE_HEALTH_CAPTURE_ATOMIC_TIMEOUT_SECONDS:-30}" env --chdir="$clean_project" "$clean_project/scripts/verify_art_v1_capture_atomic.sh" --skip-lock-wait
 			;;
 		timeout-owner-records)
-			run_gate "timeout-owner-records" "${RELEASE_HEALTH_TIMEOUT_OWNER_RECORDS_TIMEOUT_SECONDS:-10}" "$project_root/scripts/verify_timeout_owner_records.sh"
+			run_gate "timeout-owner-records" "${RELEASE_HEALTH_TIMEOUT_OWNER_RECORDS_TIMEOUT_SECONDS:-10}" env --chdir="$clean_project" "$clean_project/scripts/verify_timeout_owner_records.sh"
 			;;
 		timeout-guards)
-			run_gate "timeout-guards" "${RELEASE_HEALTH_TIMEOUT_GUARDS_TIMEOUT_SECONDS:-55}" "$project_root/scripts/verify_timeout_guards.sh"
+			run_gate "timeout-guards" "${RELEASE_HEALTH_TIMEOUT_GUARDS_TIMEOUT_SECONDS:-55}" env --chdir="$clean_project" "$clean_project/scripts/verify_timeout_guards.sh"
 			;;
 		clean-clone)
 			run_gate "clean-clone" "${RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS:-45}" "$project_root/scripts/release_health.sh" --clean-clone "$release_root" "$repo_root" "$source_head"
@@ -200,6 +201,8 @@ run_release_gates() {
 		return $?
 	fi
 
+	run_selected_gate clean-clone "$release_root" "$repo_root" "$source_head"
+	run_selected_gate cold-import "$release_root" "$repo_root" "$source_head"
 	run_selected_gate isolation "$release_root" "$repo_root" "$source_head"
 	run_selected_gate autosave "$release_root" "$repo_root" "$source_head"
 	run_selected_gate recovery-ui "$release_root" "$repo_root" "$source_head"
@@ -208,8 +211,6 @@ run_release_gates() {
 	run_selected_gate capture-atomic "$release_root" "$repo_root" "$source_head"
 	run_selected_gate timeout-owner-records "$release_root" "$repo_root" "$source_head"
 	run_selected_gate timeout-guards "$release_root" "$repo_root" "$source_head"
-	run_selected_gate clean-clone "$release_root" "$repo_root" "$source_head"
-	run_selected_gate cold-import "$release_root" "$repo_root" "$source_head"
 	run_selected_gate cold-start "$release_root" "$repo_root" "$source_head"
 	run_selected_gate screenshots "$release_root" "$repo_root" "$source_head"
 }

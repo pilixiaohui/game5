@@ -43,13 +43,37 @@ func _run() -> void:
 
 	_cleanup_slots()
 	if failures.is_empty():
-		print("ACCEPTANCE_REGRESSIONS_OK cases=5 resolutions=3 assertions=%d" % assertions)
-		quit(0)
+		await _finish_and_quit(0)
 	else:
 		for failure in failures:
 			push_error(failure)
 		print("ACCEPTANCE_REGRESSIONS_FAILED cases=5 resolutions=3 assertions=%d failures=%d" % [assertions, failures.size()])
-		quit(1)
+		await _finish_and_quit(1)
+
+func _finish_and_quit(status: int) -> void:
+	session.set_process(false)
+	for child in root.get_children():
+		if child != session:
+			child.free()
+	await process_frame
+	_cleanup_slots()
+	if status == 0:
+		var exit_ready_file := _argument("--exit-ready-file=").simplify_path()
+		var lifecycle_root := scratch_data_root.get_base_dir()
+		if exit_ready_file.is_empty() or exit_ready_file.get_base_dir() != lifecycle_root:
+			push_error("ACCEPTANCE_REGRESSIONS_REFUSED exit-ready file is outside the lifecycle root")
+			quit(1)
+			return
+		var marker := FileAccess.open(exit_ready_file, FileAccess.WRITE)
+		if marker == null:
+			push_error("ACCEPTANCE_REGRESSIONS_FAILED could not publish exit-ready marker")
+			quit(1)
+			return
+		marker.store_line("ready")
+		marker.flush()
+		marker.close()
+		print("ACCEPTANCE_ASSERTIONS_OK cases=5 resolutions=3 assertions=%d" % assertions)
+	quit(status)
 
 func _test_new_game_modal_cancel_and_escape() -> void:
 	_cleanup_slots()
