@@ -1,6 +1,7 @@
 extends SceneTree
 
 const CAPTURE_CHILD_ARG := "--capture-art-v1-child"
+const BATTLE_CAPTURE_PHASE := 1.25
 const TARGETS := [
 	Vector2i(1280, 720),
 	Vector2i(1600, 900),
@@ -72,6 +73,10 @@ func _run() -> void:
 				failures.append("%dx%d: battle fixture could not start" % [target.x, target.y])
 				continue
 		shell.call("_show_page", "battle")
+		var battle_canvas := _find_capture_canvas(shell)
+		if battle_canvas == null or not bool(battle_canvas.call("set_capture_animation_phase", BATTLE_CAPTURE_PHASE)):
+			failures.append("%dx%d: battle capture phase could not be fixed" % [target.x, target.y])
+			continue
 		await _settle()
 		_validate_live_layout("battle", target)
 		await _capture_page("battle", target)
@@ -161,6 +166,15 @@ func _find_shell(node: Node) -> Node:
 		return node
 	for child in node.get_children():
 		var found := _find_shell(child)
+		if found != null:
+			return found
+	return null
+
+func _find_capture_canvas(node: Node) -> Node:
+	if node.has_method("set_capture_animation_phase"):
+		return node
+	for child in node.get_children():
+		var found := _find_capture_canvas(child)
 		if found != null:
 			return found
 	return null

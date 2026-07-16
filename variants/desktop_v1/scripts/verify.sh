@@ -12,6 +12,7 @@ export XDG_DATA_HOME="$test_root/data"
 godot4 --headless --editor --path . --quit
 ./scripts/verify_persistence_io_contract.sh
 ./scripts/verify_screenshot_contract.sh
+./scripts/verify_cold_import.sh
 godot4 --headless --path . -s res://tests/test_runner.gd
 ./scripts/verify_acceptance_regressions.sh
 ./scripts/verify_retreat_window.sh

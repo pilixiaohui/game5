@@ -161,6 +161,38 @@ expect_term_cleanup() {
 	assert_scratch_empty external-term "$scratch_parent"
 }
 
+expect_release_cold_import_term_cleanup() {
+	local scratch_parent="$1"
+	local pid_file="$2"
+	mkdir -p "$scratch_parent"
+	rm -f "$pid_file" "$pid_file.pgid"
+	env \
+		RELEASE_HEALTH_SCRATCH_PARENT="$scratch_parent" \
+		RELEASE_HEALTH_OVERALL_TIMEOUT_SECONDS=20 \
+		RELEASE_HEALTH_COLD_IMPORT_TIMEOUT_SECONDS=15 \
+		RELEASE_HEALTH_KILL_AFTER_SECONDS=1 \
+		RELEASE_HEALTH_TEST_ONLY_GATE=cold-import \
+		RELEASE_HEALTH_TEST_HANG_GATE=cold-import \
+		RELEASE_HEALTH_TEST_HANG_COMMAND="$hanging_command" \
+		HANG_MODE=wait \
+		HANG_PID_FILE="$pid_file" \
+		./scripts/release_health.sh &
+	local wrapper_pid=$!
+	for _attempt in $(seq 1 100); do
+		if [[ -s "$pid_file.pgid" ]]; then
+			break
+		fi
+		sleep 0.02
+	done
+	test -s "$pid_file.pgid"
+	kill -TERM "$wrapper_pid"
+	local status=0
+	wait "$wrapper_pid" || status=$?
+	test "$status" -eq 143
+	assert_process_group_gone "$pid_file"
+	assert_scratch_empty release-cold-import-term "$scratch_parent"
+}
+
 cd "$project_root"
 normal_status=0
 run_with_hard_timeout normal-no-descendant 2 1 env HANG_MODE=normal "$hanging_command" || normal_status=$?
@@ -201,7 +233,7 @@ screenshot_leader_parent="$test_root/screenshot-leader-parent"
 expect_screenshot_leader_exit_cleanup "$screenshot_leader_parent" "$screenshot_project" "$test_root/screenshot-leader.pid"
 
 release_parent="$test_root/release-parent"
-for gate_name in isolation autosave recovery-ui transaction-reconciliation clean-clone cold-start screenshots; do
+for gate_name in isolation autosave recovery-ui transaction-reconciliation clean-clone cold-import cold-start screenshots; do
 	expect_timeout "release-$gate_name" "$release_parent" "$test_root/release-$gate_name.pid" \
 		env \
 			RELEASE_HEALTH_SCRATCH_PARENT="$release_parent" \
@@ -211,6 +243,7 @@ for gate_name in isolation autosave recovery-ui transaction-reconciliation clean
 			RELEASE_HEALTH_RECOVERY_UI_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_TRANSACTION_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS=1 \
+			RELEASE_HEALTH_COLD_IMPORT_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_SCREENSHOTS_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_KILL_AFTER_SECONDS=1 \
@@ -221,6 +254,8 @@ for gate_name in isolation autosave recovery-ui transaction-reconciliation clean
 			HANG_PID_FILE="$test_root/release-$gate_name.pid" \
 			./scripts/release_health.sh
 done
+
+expect_release_cold_import_term_cleanup "$release_parent" "$test_root/release-cold-import-term.pid"
 
 expect_timeout release-overall "$release_parent" "$test_root/release-overall.pid" \
 	env \
@@ -235,4 +270,4 @@ expect_timeout release-overall "$release_parent" "$test_root/release-overall.pid
 		HANG_PID_FILE="$test_root/release-overall.pid" \
 		./scripts/release_health.sh
 
-echo "TIMEOUT_GUARDS_OK normal=clean leader_exit=clean timeout=bounded term=clean screenshot_nested_timeout=bounded screenshot_leader_exit=clean release_subgates=7 overall=bounded pgids=reaped scratch_roots=clean"
+echo "TIMEOUT_GUARDS_OK normal=clean leader_exit=clean timeout=bounded term=clean release_cold_import_term=clean screenshot_nested_timeout=bounded screenshot_leader_exit=clean release_subgates=8 overall=bounded pgids=reaped scratch_roots=clean"

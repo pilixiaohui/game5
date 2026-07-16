@@ -19,6 +19,14 @@ func _process(delta: float) -> void:
 	if not battle.is_empty():
 		queue_redraw()
 
+func set_capture_animation_phase(value: float) -> bool:
+	if "--capture-art-v1-child" not in OS.get_cmdline_user_args():
+		return false
+	animation_time = value
+	set_process(false)
+	queue_redraw()
+	return true
+
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), Color("071114"), true)
 	var floor_y := size.y * 0.72

@@ -12,6 +12,54 @@ run_clean_clone() {
 	git -C "$release_root/clean-clone" checkout --quiet --detach "$source_head"
 }
 
+reject_godot_errors() {
+	local label="$1"
+	local log_path="$2"
+	if rg -n 'SCRIPT ERROR:|ERROR:|Parse Error|Failed loading resource|Failed to load|Unable to open' "$log_path"; then
+		echo "$label log contains a resource or script error." >&2
+		return 1
+	fi
+}
+
+assert_art_v1_imports() {
+	local clean_project="$1"
+	local import_file
+	local imported_path
+	local imported_count=0
+	while IFS= read -r import_file; do
+		imported_path="$(awk -F'"' '/^path="res:\/\/\.godot\/imported\/.*\.ctex"/ { print $2; exit }' "$import_file")"
+		if [[ -z "$imported_path" || ! -s "$clean_project/${imported_path#res://}" ]]; then
+			echo "Cold-import did not produce the required texture for $import_file." >&2
+			return 1
+		fi
+		imported_count=$((imported_count + 1))
+	done < <(find "$clean_project/assets/art_v1" -maxdepth 1 -type f -name '*.png.import' | sort)
+	if [[ "$imported_count" -ne 12 ]]; then
+		echo "Cold-import verified $imported_count art textures instead of 12." >&2
+		return 1
+	fi
+	echo "COLD_IMPORT_OK textures=$imported_count cache=project-local"
+}
+
+run_cold_import() {
+	local release_root="$1"
+	local clean_project="$release_root/clean-clone/variants/desktop_v1"
+	local import_log="$release_root/cold-import.log"
+	local status=0
+	env \
+		HOME="$release_root/import-home" \
+		XDG_CONFIG_HOME="$release_root/import-config" \
+		XDG_CACHE_HOME="$release_root/import-cache" \
+		XDG_DATA_HOME="$release_root/import-data" \
+		godot4 --headless --editor --path "$clean_project" --quit >"$import_log" 2>&1 || status=$?
+	cat "$import_log"
+	if [[ "$status" -ne 0 ]]; then
+		return "$status"
+	fi
+	reject_godot_errors "Cold-import" "$import_log"
+	assert_art_v1_imports "$clean_project"
+}
+
 run_cold_start() {
 	local release_root="$1"
 	local clean_project="$release_root/clean-clone/variants/desktop_v1"
@@ -27,10 +75,7 @@ run_cold_start() {
 	if [[ "$status" -ne 0 ]]; then
 		return "$status"
 	fi
-	if rg -n 'ERROR:|Parse Error|Failed loading resource|Failed to load' "$brand_log"; then
-		echo "Cold-start log contains a resource or script error." >&2
-		return 1
-	fi
+	reject_godot_errors "Cold-start" "$brand_log"
 }
 
 run_screenshots() {
@@ -51,6 +96,11 @@ fi
 
 if [[ "${1:-}" == "--cold-start" ]]; then
 	run_cold_start "$2"
+	exit $?
+fi
+
+if [[ "${1:-}" == "--cold-import" ]]; then
+	run_cold_import "$2"
 	exit $?
 fi
 
@@ -100,8 +150,11 @@ run_selected_gate() {
 		clean-clone)
 			run_gate "clean-clone" "${RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS:-45}" "$project_root/scripts/release_health.sh" --clean-clone "$release_root" "$repo_root" "$source_head"
 			;;
+		cold-import)
+			run_gate "cold-import" "${RELEASE_HEALTH_COLD_IMPORT_TIMEOUT_SECONDS:-40}" "$project_root/scripts/release_health.sh" --cold-import "$release_root"
+			;;
 		cold-start)
-			run_gate "cold-start" "${RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS:-60}" "$project_root/scripts/release_health.sh" --cold-start "$release_root"
+			run_gate "cold-start" "${RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS:-25}" "$project_root/scripts/release_health.sh" --cold-start "$release_root"
 			;;
 		screenshots)
 			run_gate "screenshots" "${RELEASE_HEALTH_SCREENSHOTS_TIMEOUT_SECONDS:-110}" "$project_root/scripts/release_health.sh" --screenshots "$release_root"
@@ -134,6 +187,7 @@ run_release_gates() {
 	run_selected_gate recovery-ui "$release_root" "$repo_root" "$source_head"
 	run_selected_gate transaction-reconciliation "$release_root" "$repo_root" "$source_head"
 	run_selected_gate clean-clone "$release_root" "$repo_root" "$source_head"
+	run_selected_gate cold-import "$release_root" "$repo_root" "$source_head"
 	run_selected_gate cold-start "$release_root" "$repo_root" "$source_head"
 	run_selected_gate screenshots "$release_root" "$repo_root" "$source_head"
 }
@@ -174,4 +228,4 @@ if [[ "$overall_status" -ne 0 ]]; then
 	exit "$overall_status"
 fi
 
-echo "RELEASE_HEALTH_OK isolation_timeout=${RELEASE_HEALTH_ISOLATION_TIMEOUT_SECONDS:-180}s autosave_timeout=${RELEASE_HEALTH_AUTOSAVE_TIMEOUT_SECONDS:-65}s recovery_ui_timeout=${RELEASE_HEALTH_RECOVERY_UI_TIMEOUT_SECONDS:-95}s transaction_timeout=${RELEASE_HEALTH_TRANSACTION_TIMEOUT_SECONDS:-45}s clone_timeout=${RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS:-45}s cold_start_timeout=${RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS:-60}s screenshots_timeout=${RELEASE_HEALTH_SCREENSHOTS_TIMEOUT_SECONDS:-110}s screenshot_inner_timeout=${RELEASE_HEALTH_SCREENSHOT_INNER_TIMEOUT_SECONDS:-90}s overall_timeout=${overall_timeout}s scratch_roots=clean-on-exit"
+echo "RELEASE_HEALTH_OK isolation_timeout=${RELEASE_HEALTH_ISOLATION_TIMEOUT_SECONDS:-180}s autosave_timeout=${RELEASE_HEALTH_AUTOSAVE_TIMEOUT_SECONDS:-65}s recovery_ui_timeout=${RELEASE_HEALTH_RECOVERY_UI_TIMEOUT_SECONDS:-95}s transaction_timeout=${RELEASE_HEALTH_TRANSACTION_TIMEOUT_SECONDS:-45}s clone_timeout=${RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS:-45}s cold_import_timeout=${RELEASE_HEALTH_COLD_IMPORT_TIMEOUT_SECONDS:-40}s cold_start_timeout=${RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS:-25}s screenshots_timeout=${RELEASE_HEALTH_SCREENSHOTS_TIMEOUT_SECONDS:-110}s screenshot_inner_timeout=${RELEASE_HEALTH_SCREENSHOT_INNER_TIMEOUT_SECONDS:-90}s overall_timeout=${overall_timeout}s scratch_roots=clean-on-exit"
