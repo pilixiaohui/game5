@@ -9,10 +9,10 @@ output_parent="$(dirname "$output_dir")"
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/xenogenesis-art-v1-atomic.XXXXXX")"
 original_capture="$test_root/original-capture"
 gate_complete=0
+lock_holder_pid=""
+lock_holder_release=""
+lock_waiter_pgid=""
 cp -a "$output_dir" "$original_capture"
-exec {capture_gate_lock_fd}<"$output_parent"
-flock -x "$capture_gate_lock_fd"
-export ART_V1_CAPTURE_LOCK_HELD=1
 
 read_pid_snapshot() {
 	local path="$1"
@@ -27,6 +27,16 @@ read_pid_snapshot() {
 }
 
 cleanup_atomic_gate() {
+	if [[ -n "$lock_holder_release" ]]; then
+		: > "$lock_holder_release"
+	fi
+	if [[ -n "$lock_holder_pid" ]] && kill -0 "$lock_holder_pid" 2>/dev/null; then
+		kill -TERM "$lock_holder_pid" 2>/dev/null || true
+		wait "$lock_holder_pid" 2>/dev/null || true
+	fi
+	if [[ -n "$lock_waiter_pgid" ]] && process_group_exists "$lock_waiter_pgid"; then
+		terminate_process_group "$lock_waiter_pgid" 1 || true
+	fi
 	if [[ "$gate_complete" -ne 1 ]]; then
 		local pgid_file
 		while IFS= read -r pgid_file; do
@@ -152,6 +162,107 @@ run_failure_case() {
 	echo "ART_V1_CAPTURE_FAILURE_OK case=$label status=$status committed_fingerprint=unchanged scratch=clean"
 }
 
+wait_for_kernel_lock_wait() {
+	local pid="$1"
+	local wait_channel=""
+	for _attempt in $(seq 1 200); do
+		if ! process_exists "$pid"; then
+			return 1
+		fi
+		IFS= read -r wait_channel < "/proc/$pid/wchan" || true
+		if [[ "$wait_channel" == *lock*wait* ]]; then
+			return 0
+		fi
+		if [[ "$wait_channel" == "do_wait" ]]; then
+			return 0
+		fi
+		sleep 0.01
+	done
+	return 1
+}
+
+assert_capture_lock_case_clean() {
+	local label="$1"
+	local scratch_root="$2"
+	local before="$3"
+	assert_capture_unchanged "$label" "$before"
+	if [[ -n "$(find "$scratch_root" -mindepth 1 -print -quit)" ]]; then
+		echo "$label left capture control/work scratch after lock wait interruption." >&2
+		find "$scratch_root" -mindepth 1 -maxdepth 2 -print >&2
+		return 1
+	fi
+}
+
+run_capture_lock_contention_cases() {
+	local case_root="$test_root/lock-contention"
+	local ready_file="$case_root/holder-ready"
+	lock_holder_release="$case_root/holder-release"
+	mkdir -p "$case_root"
+	bash -c '
+		exec 9<"$1"
+		flock -x 9
+		printf "%s\n" ready > "$2"
+		while [[ ! -e "$3" ]]; do sleep 0.02; done
+	' capture-lock-holder "$output_parent" "$ready_file" "$lock_holder_release" &
+	lock_holder_pid=$!
+	for _attempt in $(seq 1 100); do
+		[[ -s "$ready_file" ]] && break
+		sleep 0.01
+	done
+	test -s "$ready_file"
+
+	local term_scratch="$case_root/term-scratch"
+	local term_before="$case_root/term-before.fingerprint"
+	mkdir -p "$term_scratch"
+	capture_fingerprint "$term_before"
+	setsid env ART_V1_CAPTURE_LOCK_HELD=0 ART_V1_SCRATCH_PARENT="$term_scratch" \
+		ART_V1_GODOT_BIN=/definitely/missing-godot ./scripts/capture_art_v1.sh > "$case_root/term.log" 2>&1 &
+	local waiter_pid=$!
+	lock_waiter_pgid="$waiter_pid"
+	if ! wait_for_kernel_lock_wait "$waiter_pid"; then
+		local waiter_wchan=""
+		IFS= read -r waiter_wchan < "/proc/$waiter_pid/wchan" 2>/dev/null || true
+		echo "Capture TERM waiter did not block in flock: wchan=${waiter_wchan:-gone}" >&2
+		return 1
+	fi
+	kill -TERM -- "-$lock_waiter_pgid"
+	local term_status=0
+	wait "$waiter_pid" || term_status=$?
+	if ! wait_for_process_group_exit "$lock_waiter_pgid" 1; then
+		echo "Capture TERM waiter process group survived gate return: pgid=$lock_waiter_pgid" >&2
+		return 1
+	fi
+	lock_waiter_pgid=""
+	if [[ "$term_status" -eq 0 ]]; then
+		echo "Capture TERM waiter unexpectedly succeeded." >&2
+		return 1
+	fi
+	assert_capture_lock_case_clean lock-wait-term "$term_scratch" "$term_before"
+
+	local timeout_scratch="$case_root/timeout-scratch"
+	local timeout_before="$case_root/timeout-before.fingerprint"
+	mkdir -p "$timeout_scratch"
+	capture_fingerprint "$timeout_before"
+	local timeout_status=0
+	run_with_hard_timeout capture-lock-wait 1 1 env \
+		ART_V1_CAPTURE_LOCK_HELD=0 \
+		ART_V1_SCRATCH_PARENT="$timeout_scratch" \
+		ART_V1_GODOT_BIN=/definitely/missing-godot \
+		./scripts/capture_art_v1.sh > "$case_root/timeout.log" 2>&1 || timeout_status=$?
+	if [[ "$timeout_status" -ne 124 && "$timeout_status" -ne 137 ]]; then
+		echo "Capture hard-timeout waiter returned unexpected status: $timeout_status" >&2
+		cat "$case_root/timeout.log" >&2
+		return 1
+	fi
+	assert_capture_lock_case_clean lock-wait-timeout "$timeout_scratch" "$timeout_before"
+
+	: > "$lock_holder_release"
+	wait "$lock_holder_pid"
+	lock_holder_pid=""
+	lock_holder_release=""
+	echo "ART_V1_CAPTURE_LOCK_WAIT_OK term_status=$term_status timeout_status=$timeout_status committed=unchanged scratch=clean processes=gone"
+}
+
 run_capture_root_case() {
 	local mode="$1"
 	local case_root="$test_root/root-$mode"
@@ -246,6 +357,11 @@ if [[ "$(wc -l < "$baseline")" -ne 15 ]]; then
 	exit 1
 fi
 
+run_capture_lock_contention_cases
+exec {capture_gate_lock_fd}<"$output_parent"
+flock -x "$capture_gate_lock_fd"
+export ART_V1_CAPTURE_LOCK_HELD=1
+
 run_failure_case godot-unavailable unavailable unavailable
 run_failure_case first-pass-interrupt first_interrupt timeout
 run_failure_case second-pass-interrupt second_interrupt timeout
@@ -263,4 +379,4 @@ run_transaction_fault rollback-quarantine new 5
 run_transaction_fault rollback-partial-delete new 6
 
 gate_complete=1
-echo "VERIFY_ART_V1_CAPTURE_ATOMIC_OK precommit_cases=8 transaction_faults=6 files=15 fingerprints=path,sha256,size,mtime_ns generations=old-or-new capture_root=canonical-owned-exact-regular processes=gone scratch=clean"
+echo "VERIFY_ART_V1_CAPTURE_ATOMIC_OK lock_wait_interruptions=2 precommit_cases=8 transaction_faults=6 files=15 fingerprints=path,sha256,size,mtime_ns generations=old-or-new capture_root=canonical-owned-exact-regular processes=gone scratch=clean"

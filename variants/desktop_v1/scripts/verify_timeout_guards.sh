@@ -6,6 +6,8 @@ source "$project_root/scripts/timeout_gate.sh"
 hanging_command="$project_root/tests/hanging_process.sh"
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/xenogenesis-timeout-guards.XXXXXX")"
 guards_complete=0
+orphan_child_pid=""
+orphan_child_stop=""
 # This destructive registry-fault matrix owns a private registry. When the
 # gate itself is nested under release-health, the parent registry stays intact.
 unset HARD_TIMEOUT_REGISTRY_ROOT HARD_TIMEOUT_REGISTRY_OWNER_PID HARD_TIMEOUT_PARENT_PID
@@ -25,6 +27,12 @@ read_pid_snapshot() {
 }
 
 cleanup_timeout_guards() {
+	if [[ -n "$orphan_child_stop" ]]; then
+		: > "$orphan_child_stop"
+	fi
+	if [[ -n "$orphan_child_pid" ]] && kill -0 "$orphan_child_pid" 2>/dev/null; then
+		kill -TERM "$orphan_child_pid" 2>/dev/null || true
+	fi
 	if [[ "$guards_complete" -ne 1 ]]; then
 		local pgid_file
 		while IFS= read -r pgid_file; do
@@ -149,6 +157,70 @@ expect_stale_identity_not_signaled() {
 	kill "$unrelated_pid"
 	wait "$unrelated_pid" 2>/dev/null || true
 	echo "TIMEOUT_STALE_IDENTITY_OK mismatch=nonzero unrelated=alive"
+}
+
+expect_leaderless_reused_group_not_signaled() {
+	local case_root="$test_root/leaderless-reused-group"
+	local ready_file="$case_root/ready"
+	local leader_release="$case_root/release-leader"
+	orphan_child_stop="$case_root/stop-child"
+	mkdir -p "$case_root"
+	setsid bash -c '
+		ready_file="$1"
+		leader_release="$2"
+		child_stop="$3"
+		nohup bash -c '\''trap "exit 0" TERM INT; while [[ ! -e "$1" ]]; do sleep 0.02; done'\'' child "$child_stop" >/dev/null 2>&1 &
+		child_pid=$!
+		printf "%s %s\n" "$BASHPID" "$child_pid" > "$ready_file"
+		while [[ ! -e "$leader_release" ]]; do sleep 0.02; done
+		disown "$child_pid" 2>/dev/null || true
+	' orphan-session "$ready_file" "$leader_release" "$orphan_child_stop" &
+	local leader_launcher=$!
+	for _attempt in $(seq 1 100); do
+		[[ -s "$ready_file" ]] && break
+		sleep 0.01
+	done
+	if [[ ! -s "$ready_file" ]]; then
+		echo "Leaderless PGID fixture did not publish its identities." >&2
+		return 1
+	fi
+	local leader_pid=""
+	read -r leader_pid orphan_child_pid < "$ready_file"
+	local leader_identity=""
+	leader_identity="$(read_process_identity "$leader_pid")"
+	local boot_id pid_namespace leader_start
+	read -r boot_id pid_namespace leader_start <<< "$leader_identity"
+	: > "$leader_release"
+	wait "$leader_launcher"
+	if process_exists "$leader_pid" || ! process_exists "$orphan_child_pid" || ! process_group_exists "$leader_pid"; then
+		echo "Leaderless PGID fixture did not reach the reused-group boundary." >&2
+		return 1
+	fi
+
+	local parent_identity=""
+	parent_identity="$(read_process_identity "$BASHPID")"
+	local parent_boot parent_namespace parent_start
+	read -r parent_boot parent_namespace parent_start <<< "$parent_identity"
+	local stale_record="$HARD_TIMEOUT_REGISTRY_ROOT/leaderless-reused.record"
+	write_test_record "$stale_record" "$leader_pid" "$leader_pid" "$BASHPID" "$parent_start" "$boot_id" "$pid_namespace" "$leader_start"
+	local status=0
+	cleanup_registered_timeout_descendants "$BASHPID" "$parent_start" 1 || status=$?
+	if [[ "$status" -eq 0 || ! -e "/proc/$orphan_child_pid" || -e "$stale_record" ]]; then
+		echo "Leaderless stale PGID was accepted or signaled: status=$status child_alive=$([[ -e "/proc/$orphan_child_pid" ]] && echo true || echo false) record_present=$([[ -e "$stale_record" ]] && echo true || echo false)" >&2
+		return 1
+	fi
+	: > "$orphan_child_stop"
+	for _attempt in $(seq 1 100); do
+		! process_exists "$orphan_child_pid" && break
+		sleep 0.02
+	done
+	if process_exists "$orphan_child_pid"; then
+		echo "Leaderless PGID fixture child did not cleanly exit." >&2
+		return 1
+	fi
+	orphan_child_pid=""
+	orphan_child_stop=""
+	echo "TIMEOUT_LEADERLESS_STALE_OK status=$status unrelated_child=alive record=discarded cleanup=clean"
 }
 
 expect_bounded_registry_graph_failures() {
@@ -380,6 +452,7 @@ expect_deleted_registry_pre_spawn_failure
 expect_registration_failure_cleanup registration-write-failure
 expect_registration_failure_cleanup registry-deleted-after-spawn
 expect_stale_identity_not_signaled
+expect_leaderless_reused_group_not_signaled
 expect_bounded_registry_graph_failures
 find "$HARD_TIMEOUT_REGISTRY_ROOT" -maxdepth 1 -type f -name '*.record' -printf '%f\n' | sort > "$test_root/registry-baseline"
 normal_status=0
@@ -508,4 +581,4 @@ if [[ "${#HARD_TIMEOUT_ACTIVE_PIDS[@]}" -ne 0 ]] || \
 	exit 1
 fi
 guards_complete=1
-echo "TIMEOUT_GUARDS_OK registry_prespan=fail-closed registration_failure=reaped identity=boot,pidns,starttime stale=discarded graph=iterative-bounded normal=clean leader_exit=clean timeout=bounded term=clean kill=bounded release_cold_import_term=clean screenshot_nested_timeout=bounded screenshot_leader_exit=clean release_screenshots_continuous=2 release_screenshots_concurrent=2 release_subgates=10 overall=bounded pids=reaped pgids=reaped scratch_roots=clean"
+echo "TIMEOUT_GUARDS_OK registry_prespan=fail-closed registration_failure=reaped identity=boot,pidns,starttime stale=discarded leaderless_reused_pgid=discarded graph=iterative-bounded normal=clean supervisor_leader_exit=clean timeout=bounded term=clean kill=bounded release_cold_import_term=clean screenshot_nested_timeout=bounded screenshot_leader_exit=clean release_screenshots_continuous=2 release_screenshots_concurrent=2 release_subgates=10 overall=bounded pids=reaped pgids=reaped scratch_roots=clean"

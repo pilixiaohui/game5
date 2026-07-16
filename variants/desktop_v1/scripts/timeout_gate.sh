@@ -58,7 +58,7 @@ process_group_exists() {
 read_process_stat_fields() {
 	local pid="$1"
 	local stat_line=""
-	if [[ ! "$pid" =~ ^[1-9][0-9]*$ ]] || ! IFS= read -r stat_line < "/proc/$pid/stat"; then
+	if [[ ! "$pid" =~ ^[1-9][0-9]*$ ]] || ! { IFS= read -r stat_line < "/proc/$pid/stat"; } 2>/dev/null; then
 		return 1
 	fi
 	local fields="${stat_line##*) }"
@@ -116,25 +116,10 @@ group_identity_matches() {
 		[[ "$leader_pgrp" == "$pgid" && "$leader_session" == "$pgid" && "$leader_start" == "$expected_start" ]]
 		return $?
 	fi
-
-	local proc_dir=""
-	local member_pid=""
-	local fields=""
-	local member_pgrp member_session member_start member_state
-	local member_namespace=""
-	local found=0
-	for proc_dir in /proc/[0-9]*; do
-		member_pid="${proc_dir#/proc/}"
-		fields="$(read_process_stat_fields "$member_pid")" || continue
-		read -r member_pgrp member_session member_start member_state <<< "$fields"
-		if [[ "$member_pgrp" != "$pgid" || "$member_session" != "$pgid" || "$member_start" -lt "$expected_start" ]]; then
-			continue
-		fi
-		member_namespace="$(readlink "$proc_dir/ns/pid" 2>/dev/null)" || continue
-		[[ "$member_namespace" == "$expected_namespace" ]] || return 1
-		found=1
-	done
-	[[ "$found" -eq 1 ]]
+	# A process group ID is reusable. Once its authenticated session leader is
+	# gone, membership alone cannot prove that the current group is the one we
+	# registered, so group-directed signaling is forbidden.
+	return 1
 }
 
 read_process_group() {
@@ -197,6 +182,38 @@ wait_for_process_group_exit() {
 	done
 }
 
+timeout_group_has_live_member_except() {
+	local leader_pid="$1"
+	local pgid="$2"
+	local proc_dir=""
+	local member_pid=""
+	local fields=""
+	local member_pgrp member_session member_start member_state
+	for proc_dir in /proc/[0-9]*; do
+		member_pid="${proc_dir#/proc/}"
+		[[ "$member_pid" == "$leader_pid" ]] && continue
+		fields="$(read_process_stat_fields "$member_pid")" || continue
+		read -r member_pgrp member_session member_start member_state <<< "$fields"
+		if [[ "$member_pgrp" == "$pgid" && "$member_state" != "Z" ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+wait_for_timeout_group_members_exit() {
+	local leader_pid="$1"
+	local pgid="$2"
+	local wait_seconds="$3"
+	local deadline_ns=$(( $(date +%s%N) + wait_seconds * 1000000000 ))
+	while timeout_group_has_live_member_except "$leader_pid" "$pgid"; do
+		if (( $(date +%s%N) >= deadline_ns )); then
+			return 1
+		fi
+		sleep 0.02
+	done
+}
+
 # Test cleanup uses this only for process groups created by the same gate run.
 terminate_process_group() {
 	local pgid="$1"
@@ -246,9 +263,16 @@ terminate_timeout_identity() {
 		return 2
 	fi
 	kill -TERM -- "-$pgid" 2>/dev/null || true
-	if wait_for_timeout_tree_exit "$pid" "$pgid" "$grace_seconds"; then
-		wait "$pid" 2>/dev/null || true
-		return 0
+	if wait_for_timeout_group_members_exit "$pid" "$pgid" "$grace_seconds"; then
+		if ! process_identity_matches "$pid" "$boot_id" "$pid_namespace" "$start_time"; then
+			echo "Discarded stale timeout identity before supervisor exit: pid=$pid pgid=$pgid" >&2
+			return 2
+		fi
+		kill -USR1 "$pid" 2>/dev/null || true
+		if wait_for_timeout_tree_exit "$pid" "$pgid" "$grace_seconds"; then
+			wait "$pid" 2>/dev/null || true
+			return 0
+		fi
 	fi
 	identity_status=0
 	verify_timeout_target "$pid" "$pgid" "$boot_id" "$pid_namespace" "$start_time" || identity_status=$?
@@ -525,14 +549,18 @@ run_with_hard_timeout() {
 	echo "TIMEOUT_GATE_START gate=$gate_name timeout=${timeout_seconds}s kill_after=${kill_after_seconds}s"
 	local spawn_handshake="$HARD_TIMEOUT_REGISTRY_ROOT/.spawn.$BASHPID.$RANDOM"
 	local spawn_ack="$spawn_handshake.ack"
+	local completion_file="$spawn_handshake.complete"
 	local status=0
 	setsid bash -c '
 		timeout_seconds="$1"
 		kill_after_seconds="$2"
 		spawn_handshake="$3"
 		spawn_ack="$4"
-		shift 4
-		trap "exit 143" TERM INT
+		completion_file="$5"
+		parent_pid="$6"
+		shift 6
+		trap ":" TERM INT
+		trap "exit 0" USR1
 		printf "%s\n" "$BASHPID" > "$spawn_handshake" || exit 72
 		while [[ ! -s "$spawn_ack" ]]; do
 			if ! kill -0 "$PPID" 2>/dev/null; then
@@ -542,10 +570,19 @@ run_with_hard_timeout() {
 		done
 		ack="$(<"$spawn_ack")"
 		rm -f "$spawn_handshake" "$spawn_ack"
-		[[ "$ack" == "go" ]] || exit 72
+		if [[ "$ack" != "go" ]]; then
+			while kill -0 "$parent_pid" 2>/dev/null; do sleep 0.02; done
+			exit 72
+		fi
 		export HARD_TIMEOUT_PARENT_PID="$BASHPID"
-		exec timeout --signal=TERM --kill-after="${kill_after_seconds}s" "${timeout_seconds}s" "$@"
-	' timeout-wrapper "$timeout_seconds" "$kill_after_seconds" "$spawn_handshake" "$spawn_ack" "$@" &
+		command_status=0
+		timeout --foreground --signal=TERM --kill-after="${kill_after_seconds}s" "${timeout_seconds}s" "$@" || command_status=$?
+		temporary="${completion_file}.tmp.$BASHPID"
+		printf "%s\n" "$command_status" > "$temporary" || exit 72
+		mv "$temporary" "$completion_file" || exit 72
+		while kill -0 "$parent_pid" 2>/dev/null; do sleep 0.02; done
+		exit 72
+	' timeout-supervisor "$timeout_seconds" "$kill_after_seconds" "$spawn_handshake" "$spawn_ack" "$completion_file" "$BASHPID" "$@" &
 	local timeout_pid=$!
 	local timeout_pgid="$timeout_pid"
 	local handshake_deadline=$(( $(date +%s%N) + 1000000000 ))
@@ -558,7 +595,7 @@ run_with_hard_timeout() {
 	if [[ ! -s "$spawn_handshake" ]]; then
 		terminate_process_group "$timeout_pgid" "$kill_after_seconds" || true
 		wait "$timeout_pid" 2>/dev/null || true
-		rm -f "$spawn_handshake" "$spawn_ack"
+		rm -f "$spawn_handshake" "$spawn_ack" "$completion_file" "$completion_file".tmp.*
 		echo "Timeout process handshake failed after spawning $gate_name." >&2
 		return 72
 	fi
@@ -572,7 +609,7 @@ run_with_hard_timeout() {
 		rm -rf "$HARD_TIMEOUT_REGISTRY_ROOT"
 	fi
 	if ! register_timeout_process "$gate_name" "$timeout_pid" "$timeout_pgid"; then
-		printf '%s\n' stop > "$spawn_ack" 2>/dev/null || true
+		{ printf '%s\n' stop > "$spawn_ack"; } 2>/dev/null || true
 		local boot_id pid_namespace start_time
 		if [[ -n "$spawn_identity" ]]; then
 			read -r boot_id pid_namespace start_time <<< "$spawn_identity"
@@ -581,7 +618,7 @@ run_with_hard_timeout() {
 			terminate_process_group "$timeout_pgid" "$kill_after_seconds" || true
 			wait "$timeout_pid" 2>/dev/null || true
 		fi
-		rm -f "$spawn_handshake" "$spawn_ack"
+		rm -f "$spawn_handshake" "$spawn_ack" "$completion_file" "$completion_file".tmp.*
 		echo "Timeout process registration failed after spawning $gate_name; spawned tree was reaped." >&2
 		return 72
 	fi
@@ -589,19 +626,32 @@ run_with_hard_timeout() {
 	local start_time="$HARD_TIMEOUT_LAST_START_TIME"
 	local boot_id="$HARD_TIMEOUT_LAST_BOOT_ID"
 	local pid_namespace="$HARD_TIMEOUT_LAST_PID_NAMESPACE"
-	if ! printf '%s\n' go > "$spawn_ack"; then
+	if ! { printf '%s\n' go > "$spawn_ack"; } 2>/dev/null; then
 		terminate_timeout_identity "$timeout_pid" "$timeout_pgid" "$boot_id" "$pid_namespace" "$start_time" "$kill_after_seconds" || true
-		rm -f "$record" "$spawn_handshake" "$spawn_ack"
+		rm -f "$record" "$spawn_handshake" "$spawn_ack" "$completion_file" "$completion_file".tmp.*
 		remove_active_timeout "$timeout_pid"
 		return 72
 	fi
 	echo "TIMEOUT_GATE_PROCESS gate=$gate_name pid=$timeout_pid pgid=$timeout_pgid"
-	wait "$timeout_pid" || status=$?
+	local completion_deadline=$(( $(date +%s%N) + (timeout_seconds + kill_after_seconds + 2) * 1000000000 ))
+	while [[ ! -s "$completion_file" ]]; do
+		if ! process_exists "$timeout_pid" || (( $(date +%s%N) >= completion_deadline )); then
+			status=71
+			break
+		fi
+		sleep 0.02
+	done
+	if [[ "$status" -ne 71 ]]; then
+		IFS= read -r status < "$completion_file" || status=71
+		if [[ ! "$status" =~ ^[0-9]+$ || "$status" -gt 255 ]]; then
+			status=71
+		fi
+	fi
 
 	local cleanup_status=0
 	cleanup_registered_timeout_descendants "$timeout_pid" "$start_time" "$kill_after_seconds" || cleanup_status=1
 	terminate_timeout_identity "$timeout_pid" "$timeout_pgid" "$boot_id" "$pid_namespace" "$start_time" "$kill_after_seconds" || cleanup_status=1
-	rm -f "$record"
+	rm -f "$record" "$completion_file" "$completion_file".tmp.*
 	remove_active_timeout "$timeout_pid"
 	if [[ "$cleanup_status" -ne 0 ]]; then
 		return 71

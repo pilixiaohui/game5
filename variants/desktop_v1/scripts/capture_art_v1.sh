@@ -5,19 +5,10 @@ project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$project_root/scripts/timeout_gate.sh"
 
 scratch_parent="${ART_V1_SCRATCH_PARENT:-${TMPDIR:-/tmp}}"
-control_root="$(mktemp -d "$scratch_parent/xenogenesis-art-v1-control.XXXXXX")"
-work_root="$(mktemp -d "$scratch_parent/xenogenesis-art-v1-work.XXXXXX")"
+control_root=""
+work_root=""
 output_dir="$project_root/artifacts/art_v1/captures"
 output_parent="$(dirname "$output_dir")"
-mkdir -p "$output_parent"
-if ! command -v flock >/dev/null 2>&1; then
-	echo "flock is required for atomic capture publication." >&2
-	exit 2
-fi
-if [[ "${ART_V1_CAPTURE_LOCK_HELD:-0}" != "1" ]]; then
-	exec {capture_lock_fd}<"$output_parent"
-	flock -x "$capture_lock_fd"
-fi
 stage_dir=""
 rollback_dir=""
 retired_rollback_dir=""
@@ -150,7 +141,12 @@ cleanup_art_v1_capture() {
 	if [[ -n "$rollback_dir" && "$capture_commit_state" == "idle" ]]; then
 		rm -rf "$rollback_dir"
 	fi
-	rm -rf "$control_root" "$work_root"
+	if [[ -n "$control_root" ]]; then
+		rm -rf "$control_root"
+	fi
+	if [[ -n "$work_root" ]]; then
+		rm -rf "$work_root"
+	fi
 }
 
 handle_capture_signal() {
@@ -163,6 +159,18 @@ handle_capture_signal() {
 trap cleanup_art_v1_capture EXIT
 trap handle_capture_signal TERM INT
 
+mkdir -p "$output_parent"
+if ! command -v flock >/dev/null 2>&1; then
+	echo "flock is required for atomic capture publication." >&2
+	exit 2
+fi
+if [[ "${ART_V1_CAPTURE_LOCK_HELD:-0}" != "1" ]]; then
+	exec {capture_lock_fd}<"$output_parent"
+	flock -x "$capture_lock_fd"
+fi
+
+control_root="$(mktemp -d "$scratch_parent/xenogenesis-art-v1-control.XXXXXX")"
+work_root="$(mktemp -d "$scratch_parent/xenogenesis-art-v1-work.XXXXXX")"
 mkdir -p "$work_root/pass-first" "$work_root/pass-second"
 
 expected_files=(
