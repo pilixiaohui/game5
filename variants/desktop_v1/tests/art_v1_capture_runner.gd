@@ -1,6 +1,8 @@
 extends SceneTree
 
 const CAPTURE_CHILD_ARG := "--capture-art-v1-child"
+const VALIDATE_CHILD_ARG := "--validate-art-v1-child"
+const CAPTURE_ROOT_ARG := "--capture-root="
 const BATTLE_CAPTURE_PHASE := 1.25
 const TARGETS := [
 	Vector2i(1280, 720),
@@ -27,10 +29,21 @@ var session: Node
 var main: Control
 var failures: Array[String] = []
 var captured := 0
+var capture_root := ""
 
 func _initialize() -> void:
-	if CAPTURE_CHILD_ARG not in OS.get_cmdline_user_args():
+	var arguments := OS.get_cmdline_user_args()
+	if VALIDATE_CHILD_ARG in arguments:
+		if not _configure_capture_root(arguments):
+			quit(2)
+			return
+		call_deferred("_run_validation")
+		return
+	if CAPTURE_CHILD_ARG not in arguments:
 		push_error("ART_V1_CAPTURE_REFUSED use ./scripts/capture_art_v1.sh")
+		quit(2)
+		return
+	if not _configure_capture_root(arguments):
 		quit(2)
 		return
 	call_deferred("_run")
@@ -49,7 +62,7 @@ func _run() -> void:
 	main = load("res://scenes/main.tscn").instantiate()
 	root.add_child(main)
 	await _settle()
-	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://artifacts/art_v1/captures"))
+	DirAccess.make_dir_recursive_absolute(capture_root)
 
 	for target in TARGETS:
 		root.size = target
@@ -88,6 +101,66 @@ func _run() -> void:
 		for failure in failures:
 			push_error("ART_V1_CAPTURE_FAILED %s" % failure)
 		print("ART_V1_CAPTURE_FAILED count=%d failures=%d" % [captured, failures.size()])
+		quit(1)
+
+func _configure_capture_root(arguments: PackedStringArray) -> bool:
+	for argument in arguments:
+		if argument.begins_with(CAPTURE_ROOT_ARG):
+			capture_root = argument.trim_prefix(CAPTURE_ROOT_ARG).simplify_path()
+			break
+	var owned_root := OS.get_environment("ART_V1_CAPTURE_WORK_ROOT").simplify_path()
+	if capture_root.is_empty() or not capture_root.is_absolute_path():
+		push_error("ART_V1_CAPTURE_REFUSED capture root must be absolute")
+		return false
+	if owned_root.is_empty() or (capture_root != owned_root and not capture_root.begins_with(owned_root + "/")):
+		push_error("ART_V1_CAPTURE_REFUSED capture root must stay inside the owned work root")
+		return false
+	return true
+
+func _expected_capture_sizes() -> Dictionary:
+	var expected := {}
+	for target in TARGETS:
+		for page in PAGES:
+			expected["%s_%dx%d.png" % [page, target.x, target.y]] = target
+	return expected
+
+func _run_validation() -> void:
+	var expected := _expected_capture_sizes()
+	var actual: Array[String] = []
+	for filename in DirAccess.get_files_at(capture_root):
+		if filename.ends_with(".png"):
+			actual.append(filename)
+	actual.sort()
+	var expected_names: Array[String] = []
+	for filename in expected.keys():
+		expected_names.append(filename)
+	expected_names.sort()
+	if actual != expected_names:
+		failures.append("capture set mismatch expected=%s actual=%s" % [expected_names, actual])
+	for filename in expected_names:
+		var path := capture_root.path_join(filename)
+		var image := Image.new()
+		var error := image.load(path)
+		if error != OK or image.is_empty():
+			failures.append("%s: image load failed (%s)" % [filename, error])
+			continue
+		var expected_size: Vector2i = expected[filename]
+		if Vector2i(image.get_width(), image.get_height()) != expected_size:
+			failures.append("%s: expected %s, got %dx%d" % [filename, expected_size, image.get_width(), image.get_height()])
+			continue
+		var sampled_colors := {}
+		for y in range(0, image.get_height(), 24):
+			for x in range(0, image.get_width(), 24):
+				sampled_colors[image.get_pixel(x, y).to_html(false)] = true
+		if sampled_colors.size() < 12:
+			failures.append("%s: image appears blank (%d sampled colors)" % [filename, sampled_colors.size()])
+	if failures.is_empty():
+		print("ART_V1_CAPTURE_VALIDATION_OK root=%s count=%d sizes=3 content=nonblank" % [capture_root, expected.size()])
+		quit(0)
+	else:
+		for failure in failures:
+			push_error("ART_V1_CAPTURE_VALIDATION_FAILED %s" % failure)
+		print("ART_V1_CAPTURE_VALIDATION_FAILED failures=%d" % failures.size())
 		quit(1)
 
 func _validate_source_assets() -> void:
@@ -153,7 +226,7 @@ func _capture_page(page: String, target: Vector2i) -> void:
 	if sampled_colors.size() < 12:
 		failures.append("%s %dx%d: screenshot appears blank (%d sampled colors)" % [page, target.x, target.y, sampled_colors.size()])
 		return
-	var path := "res://artifacts/art_v1/captures/%s_%dx%d.png" % [page, target.x, target.y]
+	var path := capture_root.path_join("%s_%dx%d.png" % [page, target.x, target.y])
 	var error := image.save_png(path)
 	if error != OK:
 		failures.append("%s: save failed (%s)" % [path, error])
