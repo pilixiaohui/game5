@@ -3,6 +3,7 @@ set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$project_root/scripts/timeout_gate.sh"
+"$project_root/scripts/verify_post_import_ready.sh"
 
 caller_root="$(mktemp -d "${TMPDIR:-/tmp}/xenogenesis-caller.XXXXXX")"
 scratch_parent="$(mktemp -d "${TMPDIR:-/tmp}/xenogenesis-scratch-parent.XXXXXX")"

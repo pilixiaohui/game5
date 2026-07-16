@@ -10,6 +10,7 @@ export XDG_CACHE_HOME="$test_root/cache"
 export XDG_DATA_HOME="$test_root/data"
 
 godot4 --headless --editor --path . --quit
+./scripts/verify_post_import_ready.sh
 ./scripts/verify_persistence_io_contract.sh
 ./scripts/verify_screenshot_contract.sh
 if [[ "${VERIFY_RELEASE_SPLIT_GATES:-0}" != "1" ]]; then

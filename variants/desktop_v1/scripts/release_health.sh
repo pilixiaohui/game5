@@ -27,26 +27,6 @@ reject_godot_errors() {
 	fi
 }
 
-assert_art_v1_imports() {
-	local clean_project="$1"
-	local import_file
-	local imported_path
-	local imported_count=0
-	while IFS= read -r import_file; do
-		imported_path="$(awk -F'"' '/^path="res:\/\/\.godot\/imported\/.*\.ctex"/ { print $2; exit }' "$import_file")"
-		if [[ -z "$imported_path" || ! -s "$clean_project/${imported_path#res://}" ]]; then
-			echo "Cold-import did not produce the required texture for $import_file." >&2
-			return 1
-		fi
-		imported_count=$((imported_count + 1))
-	done < <(find "$clean_project/assets/art_v1" -maxdepth 1 -type f -name '*.png.import' | sort)
-	if [[ "$imported_count" -ne 12 ]]; then
-		echo "Cold-import verified $imported_count art textures instead of 12." >&2
-		return 1
-	fi
-	echo "COLD_IMPORT_OK textures=$imported_count cache=project-local"
-}
-
 run_cold_import() {
 	local release_root="$1"
 	local clean_project="$release_root/clean-clone/variants/desktop_v1"
@@ -63,7 +43,8 @@ run_cold_import() {
 		return "$status"
 	fi
 	reject_godot_errors "Cold-import" "$import_log"
-	assert_art_v1_imports "$clean_project"
+	env --chdir="$clean_project" "$clean_project/scripts/verify_post_import_ready.sh"
+	echo "COLD_IMPORT_OK textures=12 cache=project-local"
 }
 
 run_cold_start() {
