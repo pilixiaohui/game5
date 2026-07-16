@@ -148,6 +148,8 @@ const UNIT_DEFS := {
 	"root_spore": {"name": "根脉孢体", "cost": 8, "seconds": 6},
 }
 
+const BATTLE_ASSAULT_INTERVAL_TICKS := 2
+
 const CANDIDATES := [
 	{"id": "acid_jaws", "name": "酸蚀颚列", "summary": "噬咬体伤害 +35%", "pressure": "能源负载 +1", "cost": 7, "accent": "#dc785f"},
 	{"id": "carrier_membrane", "name": "载流膜翼", "summary": "工蜂回流效率 +50%", "pressure": "工蜂耐久 -10%", "cost": 6, "accent": "#57c4c3"},
@@ -783,7 +785,8 @@ func _update_battle() -> void:
 		attack_power *= 1.35
 	if _has_mutation("root_resonance"):
 		attack_power += float(battle.roots) * 0.5
-	var enemy_kills: int = mini(int(battle.enemy), maxi(1, int(floor(attack_power / 8.0)))) if attack_power > 0 else 0
+	var assault_boundary: bool = int(battle.elapsed) == 1 or int(battle.elapsed) % BATTLE_ASSAULT_INTERVAL_TICKS == 0
+	var enemy_kills: int = mini(int(battle.enemy), maxi(1, int(floor(attack_power / 8.0)))) if attack_power > 0 and assault_boundary else 0
 	battle.enemy -= enemy_kills
 	battle.kills += enemy_kills
 	state.stats.enemies_defeated += enemy_kills
@@ -793,7 +796,7 @@ func _update_battle() -> void:
 		battle.biter -= losses
 		battle.losses += losses
 		state.units.lost += losses
-	if battle.enemy <= 0 and battle.structure_hp > 0:
+	if assault_boundary and battle.enemy <= 0 and battle.structure_hp > 0:
 		battle.structure_hp = max(0, int(battle.structure_hp) - max(1, int(floor(attack_power / 10.0))))
 	if battle.biter + battle.spore + battle.roots <= 0:
 		var failed_node := _node(battle.node_id)
