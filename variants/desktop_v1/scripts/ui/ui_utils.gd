@@ -40,3 +40,12 @@ static func progress(value: float, maximum: float = 100.0) -> ProgressBar:
 	bar.show_percentage = false
 	bar.custom_minimum_size.y = 8
 	return bar
+
+static func texture_rect(texture: Texture2D, minimum_size: Vector2) -> TextureRect:
+	var node := TextureRect.new()
+	node.texture = texture
+	node.custom_minimum_size = minimum_size
+	node.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	node.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	node.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return node

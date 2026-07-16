@@ -4,8 +4,11 @@ const ThemeFactory = preload("res://scripts/ui/theme_factory.gd")
 const UI = preload("res://scripts/ui/ui_utils.gd")
 const GameShell = preload("res://scripts/ui/game_shell.gd")
 const BrandMark = preload("res://scripts/ui/brand_mark.gd")
+const ArtAssets = preload("res://scripts/ui/art_assets.gd")
 
 var content: Control
+var title_background: TextureRect
+var title_scrim: ColorRect
 var new_game_button: Button
 var continue_button: Button
 var settings_overlay: Control
@@ -49,6 +52,20 @@ func _build_background() -> void:
 	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(background)
+	title_background = TextureRect.new()
+	title_background.name = "TitleBackgroundArt"
+	title_background.texture = ArtAssets.TITLE_BACKGROUND
+	title_background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	title_background.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	title_background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	title_background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(title_background)
+	title_scrim = ColorRect.new()
+	title_scrim.name = "TitleContrastScrim"
+	title_scrim.color = Color(ThemeFactory.BG, 0.12)
+	title_scrim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	title_scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(title_scrim)
 	content = MarginContainer.new()
 	content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	content.add_theme_constant_override("margin_left", 24)
@@ -87,6 +104,8 @@ func _build_persistence_recovery() -> void:
 
 func _show_title() -> void:
 	showing_game = false
+	title_background.visible = true
+	title_scrim.visible = true
 	UI.clear(content)
 	content.add_theme_constant_override("margin_left", 24)
 	content.add_theme_constant_override("margin_right", 24)
@@ -114,7 +133,7 @@ func _show_title() -> void:
 	emblem.texture = BrandMark.texture()
 	emblem.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	emblem.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	emblem.custom_minimum_size = Vector2(260, 260)
+	emblem.custom_minimum_size = Vector2(104, 104)
 	visual.add_child(emblem)
 	var premise := UI.label("经营一座活体虫巢，在持续战场中回收、解析并改写虫群。", "Section")
 	premise.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -271,6 +290,8 @@ func _show_title_notice(message: String, level: String) -> void:
 
 func _show_game() -> void:
 	showing_game = true
+	title_background.visible = false
+	title_scrim.visible = false
 	if is_instance_valid(new_game_confirmation):
 		_close_new_game_confirmation(false)
 	UI.clear(content)

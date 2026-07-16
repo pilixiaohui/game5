@@ -59,6 +59,9 @@ static func build() -> Theme:
 	_add_variation(theme, "Muted", "Label", 14, MUTED)
 	_add_variation(theme, "Metric", "Label", 20, TEXT)
 	_add_variation(theme, "Warning", "Label", 14, AMBER)
+	for variation in ["GameTitle", "PageTitle", "Section"]:
+		theme.set_color("font_outline_color", variation, Color(BG, 0.92))
+		theme.set_constant("outline_size", variation, 4 if variation != "GameTitle" else 6)
 	_add_button_variation(theme, "PrimaryButton", GREEN, BG)
 	_add_button_variation(theme, "DangerButton", RED, Color.WHITE)
 	_add_button_variation(theme, "NavButton", SURFACE, TEXT)

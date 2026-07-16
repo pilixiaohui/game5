@@ -5,6 +5,7 @@ signal return_to_title_requested
 const ThemeFactory = preload("res://scripts/ui/theme_factory.gd")
 const UI = preload("res://scripts/ui/ui_utils.gd")
 const BrandMark = preload("res://scripts/ui/brand_mark.gd")
+const ArtAssets = preload("res://scripts/ui/art_assets.gd")
 const HivePage = preload("res://scripts/ui/hive_page.gd")
 const MapPage = preload("res://scripts/ui/map_page.gd")
 const BattlePage = preload("res://scripts/ui/battle_page.gd")
@@ -28,6 +29,7 @@ var resource_labels := {}
 var tick_label: Label
 var speed_buttons := {}
 var battle_strip: PanelContainer
+var battle_state_icon: TextureRect
 var battle_text: Label
 var notice_band: PanelContainer
 var notice_label: Label
@@ -75,8 +77,18 @@ func _build_status_bar() -> void:
 	row.add_child(UI.separator(true))
 	for key in ["biomass", "energy", "genes"]:
 		var metric := VBoxContainer.new()
-		metric.custom_minimum_size.x = 105
-		metric.add_child(UI.label({"biomass": "生物质", "energy": "储能", "genes": "基因"}[key], "Muted"))
+		metric.custom_minimum_size.x = 114
+		if key == "biomass":
+			var identity_row := HBoxContainer.new()
+			identity_row.add_theme_constant_override("separation", 5)
+			identity_row.add_child(UI.texture_rect(ArtAssets.STATE_RESOURCE, Vector2(20, 20)))
+			var resource_name := UI.label("生物质", "Muted")
+			resource_name.autowrap_mode = TextServer.AUTOWRAP_OFF
+			resource_name.custom_minimum_size.x = 54
+			identity_row.add_child(resource_name)
+			metric.add_child(identity_row)
+		else:
+			metric.add_child(UI.label({"energy": "储能", "genes": "基因"}[key], "Muted"))
 		var value := UI.label("0", "Metric")
 		metric.add_child(value)
 		resource_labels[key] = value
@@ -134,6 +146,9 @@ func _build_battle_strip() -> void:
 	indicator.color = ThemeFactory.MUTED
 	indicator.custom_minimum_size = Vector2(6, 28)
 	row.add_child(indicator)
+	battle_state_icon = UI.texture_rect(ArtAssets.STATE_ENGAGED, Vector2(24, 24))
+	battle_state_icon.visible = false
+	row.add_child(battle_state_icon)
 	battle_text = UI.label("当前无主动战场", "Muted")
 	battle_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(battle_text)
@@ -147,8 +162,8 @@ func _build_page_host() -> void:
 	margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	margin.add_theme_constant_override("margin_left", 18)
 	margin.add_theme_constant_override("margin_right", 18)
-	margin.add_theme_constant_override("margin_top", 14)
-	margin.add_theme_constant_override("margin_bottom", 14)
+	margin.add_theme_constant_override("margin_top", 7)
+	margin.add_theme_constant_override("margin_bottom", 7)
 	add_child(margin)
 	var host := VBoxContainer.new()
 	host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -208,11 +223,13 @@ func _update_battle_strip(snapshot: Dictionary) -> void:
 	var return_button := battle_strip.find_child("ReturnBattleButton", true, false) as Button
 	var indicator := battle_strip.find_child("Indicator", true, false) as ColorRect
 	if snapshot.active_battle.is_empty():
+		battle_state_icon.visible = false
 		battle_text.text = "当前无主动战场 · 区域节点保持持久状态"
 		battle_text.theme_type_variation = "Muted"
 		return_button.disabled = true
 		indicator.color = ThemeFactory.MUTED
 	else:
+		battle_state_icon.visible = true
 		var battle: Dictionary = snapshot.active_battle
 		var node: Dictionary = session.node_by_id(battle.node_id)
 		battle_text.text = "%s  ·  敌军 %d  ·  结构 %d  ·  战损 %d" % [node.name, battle.enemy, battle.structure_hp, battle.losses]

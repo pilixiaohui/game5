@@ -2,11 +2,13 @@ extends VBoxContainer
 
 const UI = preload("res://scripts/ui/ui_utils.gd")
 const BattleCanvas = preload("res://scripts/ui/battle_canvas.gd")
+const ArtAssets = preload("res://scripts/ui/art_assets.gd")
 const RETREAT_DECISION_PAUSE := "retreat_confirmation"
 
 var snapshot: Dictionary = {}
 var canvas: Control
 var title: Label
+var engagement_icon: TextureRect
 var metrics: Label
 var retreat_button: Button
 var confirm_band: PanelContainer
@@ -25,11 +27,15 @@ func _ready() -> void:
 	add_theme_constant_override("separation", 10)
 	var header := HBoxContainer.new()
 	add_child(header)
+	engagement_icon = UI.texture_rect(ArtAssets.STATE_ENGAGED, Vector2(32, 32))
+	header.add_child(engagement_icon)
 	title = UI.label("长战场", "PageTitle")
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
 	retreat_button = UI.button("撤离", _show_retreat_confirm, "DangerButton")
 	retreat_button.name = "RetreatButton"
+	retreat_button.icon = ArtAssets.STATE_RETREAT
+	retreat_button.add_theme_constant_override("icon_max_width", 24)
 	header.add_child(retreat_button)
 	add_child(UI.label("画面代表只投影真实批次；代表数量、动画与帧率不会参与结算。", "Muted"))
 	var canvas_panel := PanelContainer.new()
@@ -54,6 +60,8 @@ func _ready() -> void:
 	confirm_row.add_child(close_button)
 	var confirm_button := UI.button("确认撤离", _confirm_retreat, "DangerButton")
 	confirm_button.name = "ConfirmRetreatButton"
+	confirm_button.icon = ArtAssets.STATE_RETREAT
+	confirm_button.add_theme_constant_override("icon_max_width", 22)
 	confirm_row.add_child(confirm_button)
 func set_snapshot(value: Dictionary) -> void:
 	snapshot = value
@@ -66,10 +74,12 @@ func set_snapshot(value: Dictionary) -> void:
 	if persistence_blocked and confirm_band.visible:
 		_hide_retreat_confirm(false)
 	if battle.is_empty():
+		engagement_icon.visible = false
 		title.text = "长战场 · 当前无主动战役"
 		metrics.text = "从区域图选择一个可观察节点提交进攻"
 		_hide_retreat_confirm(false)
 	else:
+		engagement_icon.visible = true
 		var node: Dictionary = session.node_by_id(battle.node_id)
 		title.text = "%s · %s" % [battle.node_id, node.name]
 		metrics.text = "噬咬体 %d   根脉孢体 %d   留置菌毯 %d     敌军 %d   结构 %d     歼灭 %d   战损 %d" % [battle.biter, battle.spore, battle.roots, battle.enemy, battle.structure_hp, battle.kills, battle.losses]

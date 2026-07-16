@@ -3,13 +3,14 @@ extends Control
 signal node_selected(node_id: String)
 
 const ThemeFactory = preload("res://scripts/ui/theme_factory.gd")
+const ArtAssets = preload("res://scripts/ui/art_assets.gd")
 
 var snapshot: Dictionary = {}
 var selected_id := "H"
 var node_buttons := {}
 
 func _ready() -> void:
-	custom_minimum_size = Vector2(700, 480)
+	custom_minimum_size = Vector2(700, 420)
 	resized.connect(_layout_buttons)
 
 func set_snapshot(value: Dictionary, selected: String = "") -> void:
@@ -29,6 +30,8 @@ func _ensure_buttons() -> void:
 		var button := Button.new()
 		button.custom_minimum_size = Vector2(118, 70)
 		button.focus_mode = Control.FOCUS_ALL
+		button.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		button.add_theme_constant_override("icon_max_width", 22)
 		button.pressed.connect(_on_node_pressed.bind(String(node.id)))
 		add_child(button)
 		node_buttons[node.id] = button
@@ -42,6 +45,7 @@ func _update_buttons() -> void:
 		var button: Button = node_buttons[node.id]
 		button.text = "%s  %s\n%s" % [node.id, node.name if node.observed else "未知脉冲", "已占领" if node.owned else ("交战中" if active_id == node.id else (node.role if node.observed else "轮廓已知"))]
 		button.disabled = not node.observed
+		button.icon = ArtAssets.STATE_OWNED if node.owned else (ArtAssets.STATE_ENGAGED if active_id == node.id else (ArtAssets.STATE_THREAT if node.observed else null))
 		var accent := ThemeFactory.GREEN if node.owned else (ThemeFactory.RED if active_id == node.id else ThemeFactory.CYAN)
 		if selected_id == node.id:
 			accent = ThemeFactory.AMBER
