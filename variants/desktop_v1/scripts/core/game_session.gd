@@ -991,7 +991,8 @@ func _commit_snapshot(path: String, snapshot: Dictionary) -> Dictionary:
 			return _commit_error("无法创建存档目录（%s）。" % mkdir_error)
 	var reconciliation := _reconcile_interrupted_transaction(path, IO_INSPECT_EXISTING_PRIMARY, IO_VALIDATE_ROLLBACK)
 	if not reconciliation.ok:
-		return _commit_error("新事务启动前无法确认主槽/回滚权威状态：%s" % reconciliation.error)
+		var reconciliation_error := "新事务启动前无法确认主槽/回滚权威状态：%s" % reconciliation.error
+		return _commit_uncertain(reconciliation_error) if bool(reconciliation.get("requires_reload", false)) else _commit_error(reconciliation_error)
 	if bool(reconciliation.get("preserve_rollback", false)):
 		return _commit_error("新事务启动前无法读取遗留回滚；主槽虽有效，但不会清理或覆盖任何事务候选。")
 	var primary: Dictionary = reconciliation.primary

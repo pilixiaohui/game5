@@ -18,6 +18,7 @@ godot4 --headless --path . -s res://tests/test_runner.gd
 ./scripts/verify_screenshots.sh
 ./scripts/verify_save_process.sh
 ./scripts/verify_transaction_reconciliation.sh
+./scripts/verify_save_preflight_recovery.sh
 ./scripts/verify_primary_read_io.sh
 godot4 --headless --path . -s res://tests/persistence_guard_runner.gd -- "--scratch-data-root=$test_root/data"
 godot4 --headless --path . -s res://tests/persistence_fault_runner.gd -- "--scratch-data-root=$test_root/data"

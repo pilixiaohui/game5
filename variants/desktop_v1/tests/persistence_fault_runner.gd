@@ -9,7 +9,7 @@ const FIRST_SAVE_CASES: Array[Dictionary] = [
 	{"name": "staged snapshot partial write", "boundary": "write_staged_snapshot", "phase": "write"},
 	{"name": "staged snapshot validation open", "boundary": "validate_staged_snapshot", "phase": "open"},
 	{"name": "staged snapshot validation read", "boundary": "validate_staged_snapshot", "phase": "read"},
-	{"name": "existing primary existence", "boundary": "inspect_existing_primary", "phase": "exists"},
+	{"name": "existing primary existence", "boundary": "inspect_existing_primary", "phase": "exists", "expect_uncertain": true, "reload_missing": true},
 	{"name": "first primary commit", "boundary": "commit_first_primary"},
 	{"name": "first primary validation open", "boundary": "validate_first_primary", "phase": "open", "expect_uncertain": true},
 	{"name": "first primary validation read", "boundary": "validate_first_primary", "phase": "read", "expect_uncertain": true},
@@ -217,7 +217,11 @@ func _test_first_save_failure_matrix() -> void:
 		_assert_no_unauthorized_side_effects(case.name)
 		subject.clear_injections()
 		if case.get("expect_uncertain", false):
-			if case.has("corrupt_after"):
+			if case.get("reload_missing", false):
+				_assert_false(subject.load_game(), "%s clean reload must confirm that no authoritative generation exists" % case.name)
+				_assert_true(subject.is_persistence_blocked(), "%s missing authority must remain fail-closed" % case.name)
+				_assert_false(FileAccess.file_exists(subject.DEFAULT_SAVE_PATH), "%s reload must not invent a primary" % case.name)
+			elif case.has("corrupt_after"):
 				_assert_false(subject.load_game(), "%s cannot invent authority after an invalid first slot could not be removed" % case.name)
 			else:
 				_assert_true(subject.load_game(), "%s must resolve authority by reloading the committed first slot" % case.name)

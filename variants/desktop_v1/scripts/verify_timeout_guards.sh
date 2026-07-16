@@ -6,11 +6,24 @@ source "$project_root/scripts/timeout_gate.sh"
 hanging_command="$project_root/tests/hanging_process.sh"
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/xenogenesis-timeout-guards.XXXXXX")"
 
+read_pid_snapshot() {
+	local path="$1"
+	local snapshot=""
+	if ! IFS= read -r snapshot 2>/dev/null < "$path"; then
+		return 1
+	fi
+	if [[ ! "$snapshot" =~ ^[0-9]+$ ]]; then
+		return 1
+	fi
+	printf '%s\n' "$snapshot"
+}
+
 cleanup_timeout_guards() {
 	local pgid_file
 	while IFS= read -r pgid_file; do
-		if [[ -s "$pgid_file" ]]; then
-			terminate_process_group "$(<"$pgid_file")" 1 || true
+		local pgid_snapshot=""
+		if pgid_snapshot="$(read_pid_snapshot "$pgid_file")"; then
+			terminate_process_group "$pgid_snapshot" 1 || true
 		fi
 	done < <(find "$test_root" -type f -name '*.pid.pgid' 2>/dev/null)
 	cleanup_hard_timeout_processes || true
@@ -20,14 +33,12 @@ trap cleanup_timeout_guards EXIT
 
 assert_process_group_gone() {
 	local pid_file="$1"
-	if [[ ! -s "$pid_file" || ! -s "$pid_file.pgid" ]]; then
+	local child_pid=""
+	local child_pgid=""
+	if ! child_pid="$(read_pid_snapshot "$pid_file")" || ! child_pgid="$(read_pid_snapshot "$pid_file.pgid")"; then
 		echo "Fixture did not publish PID and PGID: $pid_file" >&2
 		return 1
 	fi
-	local child_pid
-	child_pid="$(<"$pid_file")"
-	local child_pgid
-	child_pgid="$(<"$pid_file.pgid")"
 	for _attempt in $(seq 1 50); do
 		if ! kill -0 "$child_pid" 2>/dev/null && ! process_group_exists "$child_pgid"; then
 			return 0
