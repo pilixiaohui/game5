@@ -109,11 +109,19 @@ func _configure_capture_root(arguments: PackedStringArray) -> bool:
 			capture_root = argument.trim_prefix(CAPTURE_ROOT_ARG).simplify_path()
 			break
 	var owned_root := OS.get_environment("ART_V1_CAPTURE_WORK_ROOT").simplify_path()
+	var canonical_root := OS.get_environment("ART_V1_CAPTURE_CANONICAL_ROOT").simplify_path()
 	if capture_root.is_empty() or not capture_root.is_absolute_path():
 		push_error("ART_V1_CAPTURE_REFUSED capture root must be absolute")
 		return false
 	if owned_root.is_empty() or (capture_root != owned_root and not capture_root.begins_with(owned_root + "/")):
 		push_error("ART_V1_CAPTURE_REFUSED capture root must stay inside the owned work root")
+		return false
+	if canonical_root.is_empty() or capture_root != canonical_root:
+		push_error("ART_V1_CAPTURE_REFUSED capture root must match the canonical root prepared by the capture entrypoint")
+		return false
+	var capture_parent := DirAccess.open(capture_root.get_base_dir())
+	if capture_parent == null or capture_parent.is_link(capture_root.get_file()) or DirAccess.open(capture_root) == null:
+		push_error("ART_V1_CAPTURE_REFUSED capture root must be a real directory")
 		return false
 	return true
 

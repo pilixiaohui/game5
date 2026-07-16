@@ -12,7 +12,9 @@ export XDG_DATA_HOME="$test_root/data"
 godot4 --headless --editor --path . --quit
 ./scripts/verify_persistence_io_contract.sh
 ./scripts/verify_screenshot_contract.sh
-./scripts/verify_art_v1_capture_atomic.sh
+if [[ "${VERIFY_RELEASE_SPLIT_GATES:-0}" != "1" ]]; then
+	./scripts/verify_art_v1_capture_atomic.sh
+fi
 ./scripts/verify_cold_import.sh
 godot4 --headless --path . -s res://tests/test_runner.gd
 ./scripts/verify_acceptance_regressions.sh
@@ -25,4 +27,6 @@ godot4 --headless --path . -s res://tests/test_runner.gd
 ./scripts/verify_primary_read_io.sh
 godot4 --headless --path . -s res://tests/persistence_guard_runner.gd -- "--scratch-data-root=$test_root/data"
 godot4 --headless --path . -s res://tests/persistence_fault_runner.gd -- "--scratch-data-root=$test_root/data"
-./scripts/verify_timeout_guards.sh
+if [[ "${VERIFY_RELEASE_SPLIT_GATES:-0}" != "1" ]]; then
+	./scripts/verify_timeout_guards.sh
+fi

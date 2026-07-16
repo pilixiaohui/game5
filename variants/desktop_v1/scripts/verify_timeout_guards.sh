@@ -6,6 +6,9 @@ source "$project_root/scripts/timeout_gate.sh"
 hanging_command="$project_root/tests/hanging_process.sh"
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/xenogenesis-timeout-guards.XXXXXX")"
 guards_complete=0
+# This destructive registry-fault matrix owns a private registry. When the
+# gate itself is nested under release-health, the parent registry stays intact.
+unset HARD_TIMEOUT_REGISTRY_ROOT HARD_TIMEOUT_REGISTRY_OWNER_PID HARD_TIMEOUT_PARENT_PID
 ensure_hard_timeout_registry
 find "$HARD_TIMEOUT_REGISTRY_ROOT" -maxdepth 1 -type f -name '*.record' -printf '%f\n' | sort > "$test_root/registry-baseline"
 
@@ -58,6 +61,134 @@ assert_scratch_empty() {
 		echo "$label left scratch content under $scratch_parent" >&2
 		return 1
 	fi
+}
+
+reset_test_registry() {
+	HARD_TIMEOUT_ACTIVE_PIDS=()
+	HARD_TIMEOUT_ACTIVE_PGIDS=()
+	HARD_TIMEOUT_ACTIVE_RECORDS=()
+	unset HARD_TIMEOUT_REGISTRY_ROOT HARD_TIMEOUT_REGISTRY_OWNER_PID
+	ensure_hard_timeout_registry
+}
+
+expect_deleted_registry_pre_spawn_failure() {
+	local marker="$test_root/deleted-registry-spawned"
+	local deleted_root="$HARD_TIMEOUT_REGISTRY_ROOT"
+	rm -rf "$deleted_root"
+	local status=0
+	run_with_hard_timeout deleted-registry 2 1 touch "$marker" || status=$?
+	if [[ "$status" -eq 0 || -e "$marker" ]]; then
+		echo "Deleted timeout registry did not fail closed before spawn: status=$status" >&2
+		return 1
+	fi
+	reset_test_registry
+	echo "TIMEOUT_REGISTRY_PRESPAWN_OK deleted=refused child=not-spawned"
+}
+
+expect_registration_failure_cleanup() {
+	local mode="$1"
+	local pid_file="$test_root/$mode.pid"
+	local status=0
+	local started_ns
+	started_ns="$(date +%s%N)"
+	if [[ "$mode" == "registry-deleted-after-spawn" ]]; then
+		HARD_TIMEOUT_TEST_REGISTRY_DELETE_AFTER_SPAWN=1 \
+			HARD_TIMEOUT_TEST_SPAWN_PID_FILE="$pid_file" \
+			run_with_hard_timeout "$mode" 20 1 "$hanging_command" || status=$?
+	else
+		HARD_TIMEOUT_TEST_REGISTRATION_FAILURE=1 \
+			HARD_TIMEOUT_TEST_SPAWN_PID_FILE="$pid_file" \
+			run_with_hard_timeout "$mode" 20 1 "$hanging_command" || status=$?
+	fi
+	local elapsed_ns=$(( $(date +%s%N) - started_ns ))
+	if [[ "$status" -eq 0 || "$elapsed_ns" -gt 6000000000 ]]; then
+		echo "Post-spawn registration failure was not bounded: status=$status elapsed_ns=$elapsed_ns" >&2
+		return 1
+	fi
+	assert_process_group_gone "$pid_file"
+	if [[ "$mode" == "registry-deleted-after-spawn" ]]; then
+		reset_test_registry
+	fi
+	echo "TIMEOUT_REGISTRATION_FAILURE_OK mode=$mode status=$status spawned_tree=reaped elapsed_ns=$elapsed_ns"
+}
+
+write_test_record() {
+	local path="$1"
+	local pid="$2"
+	local pgid="$3"
+	local parent_pid="$4"
+	local parent_start="$5"
+	local boot_id="$6"
+	local pid_namespace="$7"
+	local start_time="$8"
+	printf 'v1 %s %s %s %s %s %s %s\n' \
+		"$pid" "$pgid" "$parent_pid" "$parent_start" "$boot_id" "$pid_namespace" "$start_time" > "$path"
+}
+
+expect_stale_identity_not_signaled() {
+	local unrelated_pid=""
+	sleep 30 &
+	unrelated_pid=$!
+	local identity=""
+	identity="$(read_process_identity "$unrelated_pid")"
+	local boot_id pid_namespace start_time
+	read -r boot_id pid_namespace start_time <<< "$identity"
+	local parent_identity=""
+	parent_identity="$(read_process_identity "$BASHPID")"
+	local parent_boot parent_namespace parent_start
+	read -r parent_boot parent_namespace parent_start <<< "$parent_identity"
+	local stale_record="$HARD_TIMEOUT_REGISTRY_ROOT/stale.record"
+	write_test_record "$stale_record" "$unrelated_pid" "$unrelated_pid" "$BASHPID" "$parent_start" "$boot_id" "$pid_namespace" "$((start_time + 1))"
+	local status=0
+	cleanup_registered_timeout_descendants "$BASHPID" "$parent_start" 1 || status=$?
+	if [[ "$status" -eq 0 || ! -e "/proc/$unrelated_pid" ]]; then
+		echo "Stale timeout identity was accepted or signaled: status=$status" >&2
+		return 1
+	fi
+	rm -f "$stale_record"
+	kill "$unrelated_pid"
+	wait "$unrelated_pid" 2>/dev/null || true
+	echo "TIMEOUT_STALE_IDENTITY_OK mismatch=nonzero unrelated=alive"
+}
+
+expect_bounded_registry_graph_failures() {
+	local graph_pid=""
+	sleep 30 &
+	graph_pid=$!
+	local child_identity=""
+	child_identity="$(read_process_identity "$graph_pid")"
+	local child_boot child_namespace child_start
+	read -r child_boot child_namespace child_start <<< "$child_identity"
+	local parent_identity=""
+	parent_identity="$(read_process_identity "$BASHPID")"
+	local parent_boot parent_namespace parent_start
+	read -r parent_boot parent_namespace parent_start <<< "$parent_identity"
+	local first="$HARD_TIMEOUT_REGISTRY_ROOT/cycle-first.record"
+	local second="$HARD_TIMEOUT_REGISTRY_ROOT/cycle-second.record"
+	write_test_record "$first" "$graph_pid" "$graph_pid" "$BASHPID" "$parent_start" "$child_boot" "$child_namespace" "$child_start"
+	write_test_record "$second" "$graph_pid" "$graph_pid" "$graph_pid" "$child_start" "$child_boot" "$child_namespace" "$child_start"
+	local started_ns
+	started_ns="$(date +%s%N)"
+	local cycle_status=0
+	cleanup_registered_timeout_descendants "$BASHPID" "$parent_start" 1 || cycle_status=$?
+	local elapsed_ns=$(( $(date +%s%N) - started_ns ))
+	if [[ "$cycle_status" -eq 0 || "$elapsed_ns" -gt 2000000000 || ! -e "/proc/$graph_pid" ]]; then
+		echo "Cyclic timeout registry was not rejected safely: status=$cycle_status elapsed_ns=$elapsed_ns" >&2
+		return 1
+	fi
+	rm -f "$first" "$second"
+	local malformed="$HARD_TIMEOUT_REGISTRY_ROOT/malformed.record"
+	printf '%s\n' 'not a timeout identity record' > "$malformed"
+	local malformed_status=0
+	cleanup_registered_timeout_descendants "$BASHPID" "$parent_start" 1 || malformed_status=$?
+	if [[ "$malformed_status" -eq 0 || ! -e "/proc/$graph_pid" ]]; then
+		echo "Malformed timeout registry was not rejected safely: status=$malformed_status" >&2
+		return 1
+	fi
+	rm -f "$malformed"
+	kill "$graph_pid"
+	wait "$graph_pid" 2>/dev/null || true
+	echo "TIMEOUT_REGISTRY_GRAPH_OK cycle=bounded malformed=nonzero unrelated=alive"
 }
 
 assert_release_screenshot_trace() {
@@ -245,6 +376,12 @@ expect_release_screenshot_timeout() {
 }
 
 cd "$project_root"
+expect_deleted_registry_pre_spawn_failure
+expect_registration_failure_cleanup registration-write-failure
+expect_registration_failure_cleanup registry-deleted-after-spawn
+expect_stale_identity_not_signaled
+expect_bounded_registry_graph_failures
+find "$HARD_TIMEOUT_REGISTRY_ROOT" -maxdepth 1 -type f -name '*.record' -printf '%f\n' | sort > "$test_root/registry-baseline"
 normal_status=0
 run_with_hard_timeout normal-no-descendant 2 1 env HANG_MODE=normal "$hanging_command" || normal_status=$?
 test "$normal_status" -eq 0
@@ -295,7 +432,7 @@ screenshot_leader_parent="$test_root/screenshot-leader-parent"
 expect_screenshot_leader_exit_cleanup "$screenshot_leader_parent" "$screenshot_project" "$test_root/screenshot-leader.pid"
 
 release_parent="$test_root/release-parent"
-for gate_name in isolation autosave recovery-ui transaction-reconciliation clean-clone cold-import cold-start screenshots; do
+for gate_name in isolation autosave recovery-ui transaction-reconciliation capture-atomic timeout-guards clean-clone cold-import cold-start screenshots; do
 	expect_timeout "release-$gate_name" "$release_parent" "$test_root/release-$gate_name.pid" \
 		env \
 			RELEASE_HEALTH_SCRATCH_PARENT="$release_parent" \
@@ -304,6 +441,8 @@ for gate_name in isolation autosave recovery-ui transaction-reconciliation clean
 			RELEASE_HEALTH_AUTOSAVE_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_RECOVERY_UI_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_TRANSACTION_TIMEOUT_SECONDS=1 \
+			RELEASE_HEALTH_CAPTURE_ATOMIC_TIMEOUT_SECONDS=1 \
+			RELEASE_HEALTH_TIMEOUT_GUARDS_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_COLD_IMPORT_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS=1 \
@@ -369,4 +508,4 @@ if [[ "${#HARD_TIMEOUT_ACTIVE_PIDS[@]}" -ne 0 ]] || \
 	exit 1
 fi
 guards_complete=1
-echo "TIMEOUT_GUARDS_OK normal=clean leader_exit=clean timeout=bounded term=clean kill=bounded release_cold_import_term=clean screenshot_nested_timeout=bounded screenshot_leader_exit=clean release_screenshots_continuous=2 release_screenshots_concurrent=2 release_subgates=8 overall=bounded pids=reaped pgids=reaped scratch_roots=clean"
+echo "TIMEOUT_GUARDS_OK registry_prespan=fail-closed registration_failure=reaped identity=boot,pidns,starttime stale=discarded graph=iterative-bounded normal=clean leader_exit=clean timeout=bounded term=clean kill=bounded release_cold_import_term=clean screenshot_nested_timeout=bounded screenshot_leader_exit=clean release_screenshots_continuous=2 release_screenshots_concurrent=2 release_subgates=10 overall=bounded pids=reaped pgids=reaped scratch_roots=clean"

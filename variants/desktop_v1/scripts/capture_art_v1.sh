@@ -9,44 +9,145 @@ control_root="$(mktemp -d "$scratch_parent/xenogenesis-art-v1-control.XXXXXX")"
 work_root="$(mktemp -d "$scratch_parent/xenogenesis-art-v1-work.XXXXXX")"
 output_dir="$project_root/artifacts/art_v1/captures"
 output_parent="$(dirname "$output_dir")"
+mkdir -p "$output_parent"
+if ! command -v flock >/dev/null 2>&1; then
+	echo "flock is required for atomic capture publication." >&2
+	exit 2
+fi
+if [[ "${ART_V1_CAPTURE_LOCK_HELD:-0}" != "1" ]]; then
+	exec {capture_lock_fd}<"$output_parent"
+	flock -x "$capture_lock_fd"
+fi
 stage_dir=""
 rollback_dir=""
-commit_active=0
+retired_rollback_dir=""
+capture_commit_state="idle"
+capture_signal_pending=0
+
+capture_fault_once() {
+	local operation="$1"
+	if [[ "${ART_V1_CAPTURE_FAULT:-}" != "$operation" ]]; then
+		return 1
+	fi
+	local marker="$control_root/fault-$operation-fired"
+	if [[ -e "$marker" ]]; then
+		return 1
+	fi
+	: > "$marker"
+	return 0
+}
+
+begin_capture_commit_critical() {
+	capture_signal_pending=0
+	trap 'capture_signal_pending=1' TERM INT
+}
+
+end_capture_commit_critical() {
+	trap handle_capture_signal TERM INT
+	if [[ "$capture_signal_pending" -eq 1 ]]; then
+		handle_capture_signal
+	fi
+}
+
+canonical_real_directory() {
+	local directory="$1"
+	if [[ ! -d "$directory" || -L "$directory" ]]; then
+		return 1
+	fi
+	realpath -e -- "$directory"
+}
+
+prepare_owned_capture_root() {
+	local owned_root="$1"
+	local capture_root="$2"
+	local owned_canonical
+	owned_canonical="$(canonical_real_directory "$owned_root")" || return 1
+	if [[ -e "$capture_root" || -L "$capture_root" ]]; then
+		echo "Capture root must be a new directory: $capture_root" >&2
+		return 1
+	fi
+	mkdir -- "$capture_root"
+	local capture_canonical
+	capture_canonical="$(canonical_real_directory "$capture_root")" || return 1
+	if [[ "$(dirname "$capture_canonical")" != "$owned_canonical" ]]; then
+		echo "Capture root escaped its canonical owned root: $capture_canonical" >&2
+		return 1
+	fi
+}
 
 recover_capture_commit() {
-	if [[ "$commit_active" -ne 1 || -z "$rollback_dir" || ! -d "$rollback_dir" ]]; then
+	if [[ "$capture_commit_state" != "old-hidden" || -z "$rollback_dir" || ! -d "$rollback_dir" ]]; then
 		return 0
 	fi
-	local failed_dir=""
+	local failed_dir="$work_root/failed-publication"
 	if [[ -d "$output_dir" ]]; then
-		failed_dir="$(mktemp -d "$output_parent/.captures-failed.XXXXXX")"
-		rmdir "$failed_dir"
-		if ! mv "$output_dir" "$failed_dir"; then
+		if capture_fault_once recover-quarantine || ! mv "$output_dir" "$failed_dir"; then
 			echo "Could not quarantine the uncommitted capture directory." >&2
 			return 1
 		fi
 	fi
-	if ! mv "$rollback_dir" "$output_dir"; then
+	if capture_fault_once restore || ! mv "$rollback_dir" "$output_dir"; then
 		echo "Could not restore the committed capture directory." >&2
-		if [[ -n "$failed_dir" && -d "$failed_dir" && ! -d "$output_dir" ]]; then
-			mv "$failed_dir" "$output_dir" || true
+		# The injected first failure models the race without making the test
+		# environment permanently unable to restore the still-complete old entry.
+		if ! mv "$rollback_dir" "$output_dir"; then
+			if [[ -d "$failed_dir" && ! -d "$output_dir" ]]; then
+				mv "$failed_dir" "$output_dir" || true
+			fi
+			return 1
 		fi
-		return 1
 	fi
 	rollback_dir=""
-	commit_active=0
-	if [[ -n "$failed_dir" ]]; then
+	capture_commit_state="idle"
+	if [[ -d "$failed_dir" ]]; then
 		rm -rf "$failed_dir"
 	fi
 }
 
+finalize_committed_rollback() {
+	if [[ "$capture_commit_state" != "new-published" ]]; then
+		return 0
+	fi
+	if [[ -n "$rollback_dir" && -d "$rollback_dir" ]]; then
+		retired_rollback_dir="$work_root/retired-rollback"
+		if capture_fault_once quarantine; then
+			echo "Could not quarantine the superseded capture generation." >&2
+			return 1
+		fi
+		if ! mv "$rollback_dir" "$retired_rollback_dir"; then
+			echo "Could not quarantine the superseded capture generation." >&2
+			return 1
+		fi
+		rollback_dir=""
+		if capture_fault_once rollback-quarantine; then
+			echo "Capture rollback quarantine was interrupted." >&2
+			return 1
+		fi
+	fi
+	if [[ -n "$retired_rollback_dir" && -d "$retired_rollback_dir" ]]; then
+		if capture_fault_once rollback-partial-delete; then
+			local first_entry=""
+			first_entry="$(find "$retired_rollback_dir" -mindepth 1 -maxdepth 1 -print -quit)"
+			if [[ -n "$first_entry" ]]; then
+				rm -rf -- "$first_entry"
+			fi
+			echo "Capture rollback deletion was interrupted after it started." >&2
+			return 1
+		fi
+		rm -rf -- "$retired_rollback_dir"
+		retired_rollback_dir=""
+	fi
+	capture_commit_state="idle"
+}
+
 cleanup_art_v1_capture() {
 	recover_capture_commit || true
+	finalize_committed_rollback || true
 	cleanup_hard_timeout_processes || true
 	if [[ -n "$stage_dir" ]]; then
 		rm -rf "$stage_dir"
 	fi
-	if [[ -n "$rollback_dir" && "$commit_active" -eq 0 ]]; then
+	if [[ -n "$rollback_dir" && "$capture_commit_state" == "idle" ]]; then
 		rm -rf "$rollback_dir"
 	fi
 	rm -rf "$control_root" "$work_root"
@@ -62,7 +163,7 @@ handle_capture_signal() {
 trap cleanup_art_v1_capture EXIT
 trap handle_capture_signal TERM INT
 
-mkdir -p "$output_parent" "$work_root/pass-first/captures" "$work_root/pass-second/captures"
+mkdir -p "$work_root/pass-first" "$work_root/pass-second"
 
 expected_files=(
 	battle_1280x720.png battle_1600x900.png battle_1920x1080.png
@@ -82,15 +183,27 @@ kill_after_seconds="${ART_V1_KILL_AFTER_SECONDS:-5}"
 assert_capture_set() {
 	local label="$1"
 	local capture_root="$2"
-	find "$capture_root" -maxdepth 1 -type f -printf '%f\n' | sort > "$control_root/$label-files"
-	if ! cmp -s "$control_root/expected-files" "$control_root/$label-files"; then
-		echo "$label did not produce the exact 15-file capture set." >&2
-		diff -u "$control_root/expected-files" "$control_root/$label-files" >&2 || true
+	local canonical_root
+	canonical_root="$(canonical_real_directory "$capture_root")" || {
+		echo "$label capture root is not a canonical real directory." >&2
+		return 1
+	}
+	if [[ "$canonical_root" != "$capture_root" ]]; then
+		echo "$label capture root is not canonical: $capture_root" >&2
 		return 1
 	fi
+	find "$capture_root" -mindepth 1 -maxdepth 1 -printf '%f|%y\n' | LC_ALL=C sort > "$control_root/$label-files"
 	local filename
 	for filename in "${expected_files[@]}"; do
-		if [[ ! -s "$capture_root/$filename" ]]; then
+		printf '%s|f\n' "$filename"
+	done | LC_ALL=C sort > "$control_root/$label-expected-entries"
+	if ! cmp -s "$control_root/$label-expected-entries" "$control_root/$label-files"; then
+		echo "$label did not produce the exact 15-file capture set." >&2
+		diff -u "$control_root/$label-expected-entries" "$control_root/$label-files" >&2 || true
+		return 1
+	fi
+	for filename in "${expected_files[@]}"; do
+		if [[ ! -f "$capture_root/$filename" || -L "$capture_root/$filename" || ! -s "$capture_root/$filename" ]]; then
 			echo "$label produced a missing or empty image: $filename" >&2
 			return 1
 		fi
@@ -101,6 +214,10 @@ validate_capture_root() {
 	local label="$1"
 	local capture_root="$2"
 	assert_capture_set "$label" "$capture_root"
+	local validation_owned_root="$work_root"
+	if [[ "$capture_root" == "$output_parent"/.captures-stage.* ]]; then
+		validation_owned_root="$output_parent"
+	fi
 	local validation_root="$work_root/validation-$label"
 	mkdir -p "$validation_root/tmp"
 	local log_path="$control_root/$label-validation.log"
@@ -110,7 +227,8 @@ validate_capture_root() {
 		XDG_CONFIG_HOME="$validation_root/config"
 		XDG_CACHE_HOME="$validation_root/cache"
 		XDG_DATA_HOME="$validation_root/data"
-		ART_V1_CAPTURE_WORK_ROOT="$capture_root"
+		ART_V1_CAPTURE_WORK_ROOT="$validation_owned_root"
+		ART_V1_CAPTURE_CANONICAL_ROOT="$capture_root"
 		"$validator_bin" --headless --audio-driver Dummy --path "$project_root"
 		-s res://tests/art_v1_capture_runner.gd -- --validate-art-v1-child "--capture-root=$capture_root"
 	)
@@ -127,7 +245,8 @@ run_capture_pass() {
 	local pass_root="$2"
 	local capture_root="$pass_root/captures"
 	local log_path="$control_root/art-v1-capture-$pass_name.log"
-	mkdir -p "$pass_root/tmp" "$capture_root"
+	mkdir -p "$pass_root/tmp"
+	prepare_owned_capture_root "$pass_root" "$capture_root"
 	local command=(
 		env TMPDIR="$pass_root/tmp"
 		xvfb-run -a env
@@ -136,6 +255,7 @@ run_capture_pass() {
 		XDG_CACHE_HOME="$pass_root/cache"
 		XDG_DATA_HOME="$pass_root/data"
 		ART_V1_CAPTURE_WORK_ROOT="$pass_root"
+		ART_V1_CAPTURE_CANONICAL_ROOT="$capture_root"
 		"$godot_bin" --audio-driver Dummy --path "$project_root"
 		-s res://tests/art_v1_capture_runner.gd -- --capture-art-v1-child "--capture-root=$capture_root"
 	)
@@ -164,26 +284,29 @@ commit_capture_directory() {
 	validate_capture_root commit-candidate "$stage_dir"
 	rollback_dir="$(mktemp -d "$output_parent/.captures-rollback.XXXXXX")"
 	rmdir "$rollback_dir"
-	commit_active=1
-	if ! mv "$output_dir" "$rollback_dir"; then
-		commit_active=0
+	begin_capture_commit_critical
+	if capture_fault_once rename-old || ! mv "$output_dir" "$rollback_dir"; then
 		rollback_dir=""
+		end_capture_commit_critical
 		echo "Could not stage the previous capture directory for rollback." >&2
 		return 1
 	fi
-	if ! mv "$stage_dir" "$output_dir"; then
+	capture_commit_state="old-hidden"
+	if [[ "${ART_V1_CAPTURE_FAULT:-}" == "restore" ]] || capture_fault_once rename-publish || ! mv "$stage_dir" "$output_dir"; then
 		echo "Could not install the verified capture directory." >&2
 		recover_capture_commit
+		end_capture_commit_critical
 		return 1
 	fi
 	stage_dir=""
-	if ! rm -rf "$rollback_dir"; then
+	# This successful atomic rename is the publication commit point. From here
+	# on the verified new generation is authoritative and is never rolled back.
+	capture_commit_state="new-published"
+	end_capture_commit_critical
+	if ! finalize_committed_rollback; then
 		echo "Could not finalize the capture directory transaction." >&2
-		recover_capture_commit
-		return 1
+		return 71
 	fi
-	rollback_dir=""
-	commit_active=0
 }
 
 first_root="$work_root/pass-first"
