@@ -1,0 +1,7 @@
+[gd_resource type="ShaderMaterial" load_steps=2 format=3]
+
+[sub_resource type="Shader" id="Shader_layer_key"]
+code = "shader_type canvas_item;\nrender_mode unshaded;\nuniform vec4 key_color : source_color = vec4(0.02745, 0.06275, 0.07843, 1.0);\nuniform float key_tolerance : hint_range(0.0, 0.2) = 0.028;\nvoid fragment() {\n    vec4 sample_color = texture(TEXTURE, UV);\n    float distance_to_key = distance(sample_color.rgb, key_color.rgb);\n    float alpha = smoothstep(key_tolerance * 0.35, key_tolerance, distance_to_key);\n    COLOR = vec4(sample_color.rgb, alpha);\n}"
+
+[resource]
+shader = SubResource("Shader_layer_key")

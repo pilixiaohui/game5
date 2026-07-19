@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="M1WorldPalette" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/art_m1/m1_world_palette.gd" id="1_palette"]
+
+[resource]
+script = ExtResource("1_palette")
+resource_name = "M1 Xenobiotic Bio-Industrial Palette"
+graphite_black = Color(0.027451, 0.062745, 0.078431, 1)
+equipment_black = Color(0.054902, 0.101961, 0.117647, 1)
+bone_white = Color(0.909804, 0.937255, 0.917647, 1)
+biomass_green = Color(0.509804, 0.839216, 0.482353, 1)
+information_cyan = Color(0.341176, 0.768627, 0.764706, 1)
+thermal_amber = Color(0.886275, 0.729412, 0.376471, 1)
+threat_vermilion = Color(0.862745, 0.470588, 0.372549, 1)

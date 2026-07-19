@@ -166,7 +166,11 @@ if ! command -v flock >/dev/null 2>&1; then
 fi
 if [[ "${ART_V1_CAPTURE_LOCK_HELD:-0}" != "1" ]]; then
 	exec {capture_lock_fd}<"$output_parent"
-	flock -x "$capture_lock_fd"
+	# Keep lock acquisition interruptible so TERM is handled promptly while a
+	# concurrent publisher owns the directory lock. No scratch exists yet.
+	while ! flock -xn "$capture_lock_fd"; do
+		sleep 0.02
+	done
 fi
 
 control_root="$(mktemp -d "$scratch_parent/xenogenesis-art-v1-control.XXXXXX")"
@@ -187,6 +191,16 @@ validator_bin="${ART_V1_VALIDATOR_BIN:-godot4}"
 timeout_seconds="${ART_V1_TIMEOUT_SECONDS:-120}"
 validator_timeout_seconds="${ART_V1_VALIDATOR_TIMEOUT_SECONDS:-20}"
 kill_after_seconds="${ART_V1_KILL_AFTER_SECONDS:-5}"
+fixture_direct="${ART_V1_CAPTURE_FIXTURE_DIRECT:-0}"
+if [[ "$fixture_direct" == "1" ]]; then
+	expected_fixture="$(realpath "$project_root/tests/art_v1_capture_fixture.sh")"
+	if [[ "${ART_V1_CAPTURE_LOCK_HELD:-0}" != "1" ]] || \
+		[[ "$(realpath "$godot_bin")" != "$expected_fixture" ]] || \
+		[[ "$(realpath "$validator_bin")" != "$expected_fixture" ]]; then
+		echo "Direct capture fixture execution is restricted to the locked repository fixture." >&2
+		exit 2
+	fi
+fi
 
 assert_capture_set() {
 	local label="$1"
@@ -241,7 +255,11 @@ validate_capture_root() {
 		-s res://tests/art_v1_capture_runner.gd -- --validate-art-v1-child "--capture-root=$capture_root"
 	)
 	local status=0
-	run_with_hard_timeout "art-v1-validate-$label" "$validator_timeout_seconds" "$kill_after_seconds" "${command[@]}" > "$log_path" 2>&1 || status=$?
+	if [[ "$fixture_direct" == "1" ]]; then
+		"${command[@]}" > "$log_path" 2>&1 || status=$?
+	else
+		run_with_hard_timeout "art-v1-validate-$label" "$validator_timeout_seconds" "$kill_after_seconds" "${command[@]}" > "$log_path" 2>&1 || status=$?
+	fi
 	cat "$log_path"
 	if [[ "$status" -ne 0 ]]; then
 		return "$status"
@@ -268,7 +286,20 @@ run_capture_pass() {
 		-s res://tests/art_v1_capture_runner.gd -- --capture-art-v1-child "--capture-root=$capture_root"
 	)
 	local status=0
-	run_with_hard_timeout "art-v1-capture-$pass_name" "$timeout_seconds" "$kill_after_seconds" "${command[@]}" > "$log_path" 2>&1 || status=$?
+	if [[ "$fixture_direct" == "1" ]]; then
+		env \
+			TMPDIR="$pass_root/tmp" \
+			HOME="$pass_root/home" \
+			XDG_CONFIG_HOME="$pass_root/config" \
+			XDG_CACHE_HOME="$pass_root/cache" \
+			XDG_DATA_HOME="$pass_root/data" \
+			ART_V1_CAPTURE_WORK_ROOT="$pass_root" \
+			ART_V1_CAPTURE_CANONICAL_ROOT="$capture_root" \
+			"$godot_bin" --audio-driver Dummy --path "$project_root" \
+			-s res://tests/art_v1_capture_runner.gd -- --capture-art-v1-child "--capture-root=$capture_root" > "$log_path" 2>&1 || status=$?
+	else
+		run_with_hard_timeout "art-v1-capture-$pass_name" "$timeout_seconds" "$kill_after_seconds" "${command[@]}" > "$log_path" 2>&1 || status=$?
+	fi
 	cat "$log_path"
 	if [[ "$status" -ne 0 ]]; then
 		return "$status"

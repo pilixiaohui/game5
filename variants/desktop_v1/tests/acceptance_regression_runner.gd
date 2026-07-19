@@ -4,13 +4,21 @@ const FaultSession = preload("res://tests/fault_injecting_game_session.gd")
 const BattlePage = preload("res://scripts/ui/battle_page.gd")
 const REAL_AUTOSAVE_MINIMUM_MSEC := 30000
 const REAL_AUTOSAVE_DEADLINE_MSEC := 37000
+const RECOVERY_ACTION_BUDGET_MSEC := 6000
+const RECOVERY_AUTOSAVE_BUDGET_MSEC := 42000
+const RECOVERY_SUITE_BUDGET_MSEC := 55000
 
 var session: Node
 var failures: Array[String] = []
 var assertions := 0
+var lifecycle_assertions := 0
 var scratch_data_root := ""
+var run_started_msec := 0
+var segment := ""
+var renderer_mode := "rendered"
 
 func _initialize() -> void:
+	run_started_msec = Time.get_ticks_msec()
 	root.size = Vector2i(1600, 900)
 	call_deferred("_run")
 
@@ -24,22 +32,45 @@ func _run() -> void:
 		push_error("ACCEPTANCE_REGRESSIONS_REFUSED scratch root does not own the save path")
 		quit(1)
 		return
+	segment = _argument("--segment=")
+	if segment not in ["", "core", "recovery"]:
+		push_error("ACCEPTANCE_REGRESSIONS_REFUSED unknown segment: %s" % segment)
+		quit(1)
+		return
+	renderer_mode = _argument("--renderer-mode=")
+	if renderer_mode.is_empty():
+		renderer_mode = "rendered"
+	if renderer_mode not in ["rendered", "dummy"] or (renderer_mode == "dummy" and segment != "core"):
+		push_error("ACCEPTANCE_REGRESSIONS_REFUSED invalid renderer mode: %s" % renderer_mode)
+		quit(1)
+		return
+	if not _publish_segment_identity(save_path):
+		quit(1)
+		return
 
 	var before := failures.size()
-	await _test_new_game_modal_cancel_and_escape()
-	_print_case("ACC-SAVE-004 new-game cancel and Esc are side-effect free", before)
-	before = failures.size()
-	await _test_retreat_confirmation_is_a_safe_decision_boundary()
-	_print_case("ACC-RULE-007 retreat confirmation freezes and resolves atomically", before)
-	before = failures.size()
-	await _test_retreat_persistence_failures_are_atomic()
-	_print_case("ACC-SAVE-001 retreat I/O failures preserve memory and committed slots", before)
-	before = failures.size()
-	await _test_ascension_layout_at_supported_resolutions()
-	_print_case("ACC-A11Y-001/002 ascension layout and text remain readable", before)
-	before = failures.size()
-	await _test_global_persistence_recovery_entrypoints()
-	_print_case("ACC-SAVE-005 uncertain saves expose one global reload entry", before)
+	if segment != "recovery":
+		await _test_new_game_modal_cancel_and_escape()
+		_print_case("ACC-SAVE-004 new-game cancel and Esc are side-effect free", before)
+		before = failures.size()
+		await _test_retreat_confirmation_is_a_safe_decision_boundary()
+		_print_case("ACC-RULE-007 retreat confirmation freezes and resolves atomically", before)
+		before = failures.size()
+		await _test_retreat_persistence_failures_are_atomic()
+		_print_case("ACC-SAVE-001 retreat I/O failures preserve memory and committed slots", before)
+		before = failures.size()
+		await _test_ascension_layout_at_supported_resolutions()
+		_print_case("ACC-A11Y-001/002 ascension layout and text remain readable", before)
+	if segment != "core":
+		if segment == "recovery":
+			_print_recovery_lifecycle("start", "total_ms=0")
+		var recovery_started_msec := Time.get_ticks_msec()
+		before = failures.size()
+		await _test_global_persistence_recovery_entrypoints()
+		_assert_lifecycle_within(Time.get_ticks_msec() - recovery_started_msec, RECOVERY_SUITE_BUDGET_MSEC, "recovery suite")
+		_print_case("ACC-SAVE-005 uncertain saves expose one global reload entry", before)
+		if segment == "recovery":
+			_print_recovery_lifecycle("complete", "total_ms=%d" % _elapsed_msec())
 
 	_cleanup_slots()
 	if failures.is_empty():
@@ -51,12 +82,22 @@ func _run() -> void:
 		await _finish_and_quit(1)
 
 func _finish_and_quit(status: int) -> void:
+	_cleanup_slots()
 	session.set_process(false)
 	for child in root.get_children():
-		if child != session:
-			child.free()
+		_disable_node_tree(child)
+		child.free()
+	session = null
 	await process_frame
-	_cleanup_slots()
+	var remaining_nodes := root.get_child_count()
+	var remaining_signals := _root_signal_connection_count()
+	if remaining_nodes != 0 or remaining_signals != 0:
+		status = 1
+		push_error("ACCEPTANCE_REGRESSIONS_FAILED lifecycle teardown retained nodes=%d signals=%d" % [remaining_nodes, remaining_signals])
+	var segment_label := segment if not segment.is_empty() else "full"
+	print("ACCEPTANCE_SEGMENT_LIFECYCLE segment=%s phase=teardown total_ms=%d nodes=%d signals=%d" % [segment_label, _elapsed_msec(), remaining_nodes, remaining_signals])
+	if segment == "recovery":
+		_print_recovery_lifecycle("teardown", "total_ms=%d nodes=%d signals=%d" % [_elapsed_msec(), remaining_nodes, remaining_signals])
 	if status == 0:
 		var exit_ready_file := _argument("--exit-ready-file=").simplify_path()
 		var lifecycle_root := scratch_data_root.get_base_dir()
@@ -72,7 +113,16 @@ func _finish_and_quit(status: int) -> void:
 		marker.store_line("ready")
 		marker.flush()
 		marker.close()
-		print("ACCEPTANCE_ASSERTIONS_OK cases=5 resolutions=3 assertions=%d" % assertions)
+		match segment:
+			"core":
+				print("ACCEPTANCE_CORE_ASSERTIONS_OK cases=4 resolutions=3 assertions=%d lifecycle_assertions=%d" % [assertions, lifecycle_assertions])
+			"recovery":
+				print("ACCEPTANCE_RECOVERY_ASSERTIONS_OK cases=1 assertions=%d lifecycle_assertions=%d" % [assertions, lifecycle_assertions])
+			_:
+				print("ACCEPTANCE_ASSERTIONS_OK cases=5 resolutions=3 assertions=%d" % assertions)
+	if segment == "recovery":
+		_print_recovery_lifecycle("quit", "total_ms=%d status=%d" % [_elapsed_msec(), status])
+	print("ACCEPTANCE_SEGMENT_LIFECYCLE segment=%s phase=quit total_ms=%d status=%d" % [segment_label, _elapsed_msec(), status])
 	quit(status)
 
 func _test_new_game_modal_cancel_and_escape() -> void:
@@ -388,9 +438,38 @@ func _test_global_persistence_recovery_entrypoints() -> void:
 			success_notices.append(message)
 	)
 
-	await _exercise_uncertain_save_entry(subject, "Ctrl+S", func(main: Control) -> void:
-		await _press_save_shortcut()
-	, battle_events, success_notices)
+	var ctrl_s_main := await _prepare_uncertain_save_entry(subject, "Ctrl+S", battle_events, success_notices)
+	var ctrl_s_shell := _find_shell(ctrl_s_main)
+	var ctrl_s_save_button := _find_button_by_text(ctrl_s_shell, "保存") if ctrl_s_shell != null else null
+	if ctrl_s_save_button != null:
+		ctrl_s_save_button.grab_focus()
+	await _settle_rendered()
+	var phase_started_msec := _start_recovery_phase("ctrl-s")
+	_assert_lifecycle_condition(root.visible and root.size == Vector2i(1600, 900), "Ctrl+S production window must be visible and ready")
+	_print_ctrl_s_boundary("window-ready", phase_started_msec, "visible=%s size=%s" % [root.visible, root.size])
+	var focus_owner := root.gui_get_focus_owner()
+	_assert_lifecycle_condition(ctrl_s_save_button != null and focus_owner == ctrl_s_save_button, "Ctrl+S production save command must own GUI focus before dispatch")
+	_print_ctrl_s_boundary("focus-ready", phase_started_msec, "owner=%s window_focus=%s" % [focus_owner.name if focus_owner != null else "none", root.has_focus()])
+	_assert_lifecycle_condition(ctrl_s_shell != null and ctrl_s_shell.is_processing_unhandled_input(), "Ctrl+S production input handler must be dispatch-ready")
+	_print_ctrl_s_boundary("input-dispatch-ready", phase_started_msec, "handler=GameShell")
+	_print_ctrl_s_boundary("ctrl-s-injected", phase_started_msec, "input=save_game")
+	await _press_save_shortcut_once()
+	var save_trace: Array = subject.operation_phase_trace.duplicate()
+	_assert_lifecycle_condition(not save_trace.is_empty(), "Ctrl+S must reach a production persistence request")
+	_print_ctrl_s_boundary("save-request", phase_started_msec, "operation=%s" % [save_trace[0] if not save_trace.is_empty() else "missing"])
+	var durable_boundary := "validate_committed_primary.open" in save_trace
+	_assert_true(durable_boundary, "Ctrl+S must reach the injected durable commit validation boundary")
+	_assert_lifecycle_condition(subject.last_commit_outcome() == "uncertain" and subject.is_reload_required(), "Ctrl+S durable completion must publish the uncertain recovery state")
+	_print_ctrl_s_boundary("durable-completion", phase_started_msec, "outcome=%s reload_required=%s" % [subject.last_commit_outcome(), subject.is_reload_required()])
+	await _assert_and_resolve_global_recovery(ctrl_s_main, subject, "Ctrl+S", battle_events, success_notices)
+	ctrl_s_main.queue_free()
+	await process_frame
+	_assert_lifecycle_condition(not is_instance_valid(ctrl_s_main), "Ctrl+S recovery fixture must release its production Main tree")
+	_print_ctrl_s_boundary("teardown", phase_started_msec, "main_alive=%s" % is_instance_valid(ctrl_s_main))
+	_finish_recovery_phase("ctrl-s", phase_started_msec, RECOVERY_ACTION_BUDGET_MSEC)
+	if segment == "recovery":
+		_print_recovery_lifecycle("ctrl-s-resolved", "total_ms=%d" % _elapsed_msec())
+	phase_started_msec = _start_recovery_phase("system-page")
 	await _exercise_uncertain_save_entry(subject, "system page save", func(main: Control) -> void:
 		var shell := _find_shell(main)
 		if shell != null:
@@ -404,10 +483,18 @@ func _test_global_persistence_recovery_entrypoints() -> void:
 		if save_button != null:
 			await _click_same_frame(save_button)
 	, battle_events, success_notices)
+	_finish_recovery_phase("system-page", phase_started_msec, RECOVERY_ACTION_BUDGET_MSEC)
+	if segment == "recovery":
+		_print_recovery_lifecycle("system-page-resolved", "total_ms=%d" % _elapsed_msec())
+	phase_started_msec = _start_recovery_phase("autosave")
 	await _exercise_uncertain_save_entry(subject, "scheduler autosave", func(main: Control) -> void:
 		await _trigger_real_autosave(subject)
 	, battle_events, success_notices)
+	_finish_recovery_phase("autosave", phase_started_msec, RECOVERY_AUTOSAVE_BUDGET_MSEC)
+	if segment == "recovery":
+		_print_recovery_lifecycle("autosave-resolved", "total_ms=%d" % _elapsed_msec())
 
+	phase_started_msec = _start_recovery_phase("first-save")
 	_cleanup_slots_for(subject)
 	subject.state = {}
 	subject.clear_injections()
@@ -426,11 +513,22 @@ func _test_global_persistence_recovery_entrypoints() -> void:
 	_assert_true(_find_shell(title_main) != null, "successful first-save reload must enter the game using disk authority")
 	title_main.queue_free()
 	await process_frame
+	_finish_recovery_phase("first-save", phase_started_msec, RECOVERY_ACTION_BUDGET_MSEC)
+	if segment == "recovery":
+		_print_recovery_lifecycle("first-save-resolved", "total_ms=%d" % _elapsed_msec())
 	subject.set_process(false)
 	subject.queue_free()
 	await process_frame
 
 func _exercise_uncertain_save_entry(subject: Node, action_name: String, trigger: Callable, battle_events: Array, success_notices: Array[String]) -> void:
+	var main := await _prepare_uncertain_save_entry(subject, action_name, battle_events, success_notices)
+	await trigger.call(main)
+	_assert_true("validate_committed_primary.open" in subject.operation_phase_trace, "%s must reach the injected post-commit open boundary" % action_name)
+	await _assert_and_resolve_global_recovery(main, subject, action_name, battle_events, success_notices)
+	main.queue_free()
+	await process_frame
+
+func _prepare_uncertain_save_entry(subject: Node, action_name: String, battle_events: Array, success_notices: Array[String]) -> Control:
 	_cleanup_slots_for(subject)
 	subject.clear_injections()
 	subject.new_game(8600 + assertions)
@@ -448,11 +546,7 @@ func _exercise_uncertain_save_entry(subject: Node, action_name: String, trigger:
 	subject.inject("validate_committed_primary", "open")
 	battle_events.clear()
 	success_notices.clear()
-	await trigger.call(main)
-	_assert_true("validate_committed_primary.open" in subject.operation_phase_trace, "%s must reach the injected post-commit open boundary" % action_name)
-	await _assert_and_resolve_global_recovery(main, subject, action_name, battle_events, success_notices)
-	main.queue_free()
-	await process_frame
+	return main
 
 func _assert_and_resolve_global_recovery(main: Control, subject: Node, action_name: String, battle_events: Array, success_notices: Array[String]) -> void:
 	var recovery_band := main.find_child("PersistenceRecovery", true, false) as Control
@@ -509,13 +603,73 @@ func _assert_and_resolve_global_recovery(main: Control, subject: Node, action_na
 func _trigger_real_autosave(subject: Node) -> void:
 	var started_msec := Time.get_ticks_msec()
 	subject.set_process(true)
-	while Time.get_ticks_msec() - started_msec < REAL_AUTOSAVE_DEADLINE_MSEC and not ("validate_committed_primary.open" in subject.operation_phase_trace):
+	while Time.get_ticks_msec() - started_msec < REAL_AUTOSAVE_DEADLINE_MSEC and \
+		(Time.get_ticks_msec() - started_msec < REAL_AUTOSAVE_MINIMUM_MSEC or \
+		not ("validate_committed_primary.open" in subject.operation_phase_trace)):
 		await process_frame
 	subject.set_process(false)
 	var elapsed_msec := Time.get_ticks_msec() - started_msec
 	_assert_true(elapsed_msec >= REAL_AUTOSAVE_MINIMUM_MSEC, "scheduler autosave must cross the real 30-second production interval")
 	_assert_true(elapsed_msec < REAL_AUTOSAVE_DEADLINE_MSEC, "scheduler autosave must reach the injected boundary before its bounded deadline")
 	print("RECOVERY_UI_REAL_AUTOSAVE elapsed_msec=%d boundary=%s" % [elapsed_msec, "validate_committed_primary.open" in subject.operation_phase_trace])
+	if segment == "recovery":
+		_print_recovery_lifecycle("autosave-boundary", "total_ms=%d elapsed_ms=%d" % [_elapsed_msec(), elapsed_msec])
+
+func _start_recovery_phase(phase_name: String) -> int:
+	var started_msec := Time.get_ticks_msec()
+	print("ACCEPTANCE_RECOVERY_PHASE phase=%s edge=start total_ms=%d" % [phase_name, _elapsed_msec()])
+	return started_msec
+
+func _finish_recovery_phase(phase_name: String, started_msec: int, budget_msec: int) -> void:
+	var elapsed_msec := Time.get_ticks_msec() - started_msec
+	var failures_before := failures.size()
+	_assert_lifecycle_within(elapsed_msec, budget_msec, "%s recovery phase" % phase_name)
+	var phase_status := "ok" if failures.size() == failures_before else "failed"
+	print("ACCEPTANCE_RECOVERY_PHASE phase=%s edge=end total_ms=%d elapsed_ms=%d budget_ms=%d status=%s" % [phase_name, _elapsed_msec(), elapsed_msec, budget_msec, phase_status])
+
+func _assert_lifecycle_within(elapsed_msec: int, budget_msec: int, label: String) -> void:
+	lifecycle_assertions += 1
+	if elapsed_msec > budget_msec:
+		failures.append("%s must complete within %d ms (actual=%d)" % [label, budget_msec, elapsed_msec])
+
+func _assert_lifecycle_condition(value: bool, message: String) -> void:
+	lifecycle_assertions += 1
+	if not value:
+		failures.append(message)
+
+func _print_ctrl_s_boundary(phase_name: String, started_msec: int, details: String) -> void:
+	print("ACCEPTANCE_CTRL_S_BOUNDARY phase=%s total_ms=%d boundary_ms=%d %s" % [phase_name, _elapsed_msec(), Time.get_ticks_msec() - started_msec, details])
+
+func _print_recovery_lifecycle(phase_name: String, details: String) -> void:
+	print("ACCEPTANCE_RECOVERY_LIFECYCLE phase=%s %s" % [phase_name, details])
+
+func _elapsed_msec() -> int:
+	return Time.get_ticks_msec() - run_started_msec
+
+func _disable_node_tree(node: Node) -> void:
+	node.process_mode = Node.PROCESS_MODE_DISABLED
+	node.set_process(false)
+	node.set_physics_process(false)
+	node.set_process_input(false)
+	node.set_process_unhandled_input(false)
+	for child in node.get_children():
+		_disable_node_tree(child)
+
+func _root_signal_connection_count() -> int:
+	var total := 0
+	for child in root.get_children():
+		total += _node_signal_connection_count(child)
+	return total
+
+func _node_signal_connection_count(node: Node) -> int:
+	var total := 0
+	for signal_info in node.get_signal_list():
+		var signal_name := StringName(signal_info.get("name", ""))
+		if not signal_name.is_empty():
+			total += node.get_signal_connection_list(signal_name).size()
+	for child in node.get_children():
+		total += _node_signal_connection_count(child)
+	return total
 
 func _instantiate_main_for(subject: Node) -> Control:
 	var main := load("res://scenes/main.tscn").instantiate() as Control
@@ -560,12 +714,17 @@ func _test_ascension_layout_at_supported_resolutions() -> void:
 	for resolution in [Vector2i(1280, 720), Vector2i(1600, 900), Vector2i(1920, 1080)]:
 		root.size = resolution
 		await _settle_rendered()
-		var texture := root.get_texture()
-		var image: Image = texture.get_image() if texture != null else null
+		var image: Image = null
+		if renderer_mode != "dummy":
+			var texture := root.get_texture()
+			image = texture.get_image() if texture != null else null
 		var point_label := _find_label_by_text(main, points_text)
 		var body_label := _find_label_containing(main, "购买后")
 		var viewport_rect := Rect2(Vector2.ZERO, Vector2(resolution))
-		_assert_true(image != null and image.get_size() == resolution, "%s must produce a real rendered frame" % resolution)
+		if renderer_mode == "dummy":
+			_assert_true(root.size == resolution and main.is_visible_in_tree() and ascension_page != null and ascension_page.is_visible_in_tree(), "%s dummy core must retain the live production Control tree" % resolution)
+		else:
+			_assert_true(image != null and image.get_size() == resolution, "%s must produce a real rendered frame" % resolution)
 		_assert_true(point_label != null and point_label.is_visible_in_tree(), "%s point total must be visible" % resolution)
 		_assert_true(body_label != null and body_label.is_visible_in_tree(), "%s ascension body copy must be visible" % resolution)
 		_assert_true(return_button != null and return_button.is_visible_in_tree(), "%s ascension return command must remain reachable" % resolution)
@@ -579,7 +738,12 @@ func _test_ascension_layout_at_supported_resolutions() -> void:
 			_assert_equal(availability.get_line_count(), 1, "%s availability must render on one actual line" % resolution)
 			_assert_equal(availability.get_visible_line_count(), availability.get_line_count(), "%s availability must not hide rendered lines" % resolution)
 			_assert_false(availability.clip_text, "%s availability must not clip text" % resolution)
-			if image != null:
+			if renderer_mode == "dummy":
+				var availability_font := availability.get_theme_font("font")
+				var availability_font_size := availability.get_theme_font_size("font_size")
+				var availability_glyphs := availability_font.get_string_size(availability.text, HORIZONTAL_ALIGNMENT_LEFT, -1, availability_font_size)
+				_assert_true(availability_glyphs.x > 0.0 and availability_glyphs.y > 0.0 and availability_glyphs.x <= availability_rect.size.x and availability_glyphs.y <= availability_rect.size.y, "%s availability glyph metrics must fit its Control rect, glyphs=%s rect=%s" % [resolution, availability_glyphs, availability_rect.size])
+			elif image != null:
 				var availability_pixels := _count_text_pixels(image, availability_rect)
 				_assert_true(availability_pixels >= 12, "%s availability rect must contain rendered text pixels, got %d" % [resolution, availability_pixels])
 		if page_title != null:
@@ -595,8 +759,9 @@ func _test_ascension_layout_at_supported_resolutions() -> void:
 		if scroll != null and longest_label != null:
 			scroll.scroll_vertical = 1000000
 			await _settle_rendered()
-			texture = root.get_texture()
-			image = texture.get_image() if texture != null else null
+			if renderer_mode != "dummy":
+				var texture := root.get_texture()
+				image = texture.get_image() if texture != null else null
 			var longest_rect := longest_label.get_global_rect()
 			var visible_scroll_rect := scroll.get_global_rect().intersection(viewport_rect)
 			_assert_true(visible_scroll_rect.encloses(longest_rect), "%s longest body text must be reachable in the visible scroll viewport, visible=%s text=%s" % [resolution, visible_scroll_rect, longest_rect])
@@ -605,10 +770,15 @@ func _test_ascension_layout_at_supported_resolutions() -> void:
 			_assert_equal(longest_label.get_visible_line_count(), longest_label.get_line_count(), "%s longest body text must expose every rendered line" % resolution)
 			_assert_false(longest_label.clip_text, "%s longest body text must not clip" % resolution)
 			var longest_pixels := -1
-			if image != null:
+			if renderer_mode == "dummy":
+				var longest_font := longest_label.get_theme_font("font")
+				var longest_font_size := longest_label.get_theme_font_size("font_size")
+				var longest_glyphs := longest_font.get_multiline_string_size(longest_label.text, HORIZONTAL_ALIGNMENT_LEFT, longest_rect.size.x, longest_font_size)
+				_assert_true(longest_glyphs.x > 0.0 and longest_glyphs.y > 0.0 and longest_glyphs.x <= longest_rect.size.x and longest_glyphs.y <= longest_rect.size.y + 8.0, "%s longest body glyph metrics must fit its Control rect, glyphs=%s rect=%s" % [resolution, longest_glyphs, longest_rect.size])
+			elif image != null:
 				longest_pixels = _count_text_pixels(image, longest_rect)
 				_assert_true(longest_pixels >= 24, "%s longest body rect must contain rendered text pixels, got %d" % [resolution, longest_pixels])
-			print("ASCENSION_RENDER size=%s header_rect=%s header_lines=%d longest_chars=%d longest_rect=%s longest_lines=%d longest_pixels=%d" % [resolution, availability.get_global_rect() if availability != null else Rect2(), availability.get_line_count() if availability != null else -1, longest_label.text.length(), longest_rect, longest_label.get_line_count(), longest_pixels])
+			print("ASCENSION_RENDER size=%s mode=%s header_rect=%s header_lines=%d longest_chars=%d longest_rect=%s longest_lines=%d longest_pixels=%d" % [resolution, renderer_mode, availability.get_global_rect() if availability != null else Rect2(), availability.get_line_count() if availability != null else -1, longest_label.text.length(), longest_rect, longest_label.get_line_count(), longest_pixels])
 			scroll.scroll_vertical = 0
 	root.size = Vector2i(1600, 900)
 	main.queue_free()
@@ -693,7 +863,7 @@ func _press_key(keycode: Key, shift_pressed: bool = false) -> void:
 	root.push_input(up)
 	await _settle()
 
-func _press_save_shortcut() -> void:
+func _press_save_shortcut_once() -> void:
 	var down := InputEventKey.new()
 	down.keycode = KEY_S
 	down.physical_keycode = KEY_S
@@ -706,7 +876,7 @@ func _press_save_shortcut() -> void:
 	up.ctrl_pressed = true
 	up.pressed = false
 	root.push_input(up)
-	await _settle()
+	await process_frame
 
 func _assert_focus_in(scope: Control, action: String) -> void:
 	var owner := root.gui_get_focus_owner()
@@ -788,7 +958,8 @@ func _count_text_pixels(image: Image, rect: Rect2) -> int:
 
 func _settle_rendered() -> void:
 	await _settle()
-	await RenderingServer.frame_post_draw
+	if renderer_mode != "dummy":
+		await RenderingServer.frame_post_draw
 
 func _settle() -> void:
 	for index in range(4):
@@ -855,6 +1026,39 @@ func _argument(prefix: String) -> String:
 		if argument.begins_with(prefix):
 			return argument.trim_prefix(prefix)
 	return ""
+
+func _publish_segment_identity(save_path: String) -> bool:
+	var save_root := save_path.get_base_dir()
+	if DirAccess.make_dir_recursive_absolute(save_root) != OK:
+		push_error("ACCEPTANCE_REGRESSIONS_REFUSED could not create the owned save root")
+		return false
+	var paths := {
+		"home": OS.get_environment("HOME"),
+		"config": OS.get_environment("XDG_CONFIG_HOME"),
+		"cache": OS.get_environment("XDG_CACHE_HOME"),
+		"data": OS.get_environment("XDG_DATA_HOME"),
+		"save": save_root,
+	}
+	var canonical := {}
+	for key in paths:
+		var value := _canonical_directory(String(paths[key]))
+		if value.is_empty():
+			push_error("ACCEPTANCE_REGRESSIONS_REFUSED %s identity is not a canonical real directory" % key)
+			return false
+		canonical[key] = value
+	var display := OS.get_environment("DISPLAY")
+	if display.is_empty():
+		push_error("ACCEPTANCE_REGRESSIONS_REFUSED display identity is missing")
+		return false
+	print("ACCEPTANCE_SEGMENT_IDENTITY segment=%s home=%s config=%s cache=%s data=%s save=%s display=%s renderer=%s" % [segment, canonical.home, canonical.config, canonical.cache, canonical.data, canonical.save, display, renderer_mode])
+	return true
+
+func _canonical_directory(path: String) -> String:
+	var output: Array = []
+	var status := OS.execute("realpath", PackedStringArray(["-e", path]), output, true)
+	if status != 0 or output.is_empty():
+		return ""
+	return String(output[0]).strip_edges()
 
 func _assert_true(value: bool, message: String) -> void:
 	assertions += 1

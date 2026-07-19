@@ -153,6 +153,12 @@ run_selected_gate() {
 		cold-import)
 			run_gate "cold-import" "${RELEASE_HEALTH_COLD_IMPORT_TIMEOUT_SECONDS:-40}" "$project_root/scripts/release_health.sh" --cold-import "$release_root"
 			;;
+		m1-fresh-ui)
+			run_gate "m1-fresh-ui" "${RELEASE_HEALTH_M1_FRESH_UI_TIMEOUT_SECONDS:-25}" env --chdir="$clean_project" M1_RENDER_CACHE_ROOT="$release_root/m1-render-cache" "$clean_project/scripts/verify_m1_fresh_ui_path.sh"
+			;;
+		m1-production-entry)
+			run_gate "m1-production-entry" "${RELEASE_HEALTH_M1_PRODUCTION_TIMEOUT_SECONDS:-70}" env --chdir="$clean_project" M1_RENDER_CACHE_ROOT="$release_root/m1-render-cache" "$clean_project/scripts/verify_m1_production_entry.sh"
+			;;
 		cold-start)
 			run_gate "cold-start" "${RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS:-25}" "$project_root/scripts/release_health.sh" --cold-start "$release_root"
 			;;
@@ -164,6 +170,12 @@ run_selected_gate() {
 			return 2
 			;;
 	esac
+}
+
+verify_release_import_ready() {
+	local release_root="$1"
+	local clean_project="$release_root/clean-clone/variants/desktop_v1"
+	env --chdir="$clean_project" "$clean_project/scripts/verify_post_import_ready.sh"
 }
 
 run_release_gates() {
@@ -184,14 +196,19 @@ run_release_gates() {
 
 	run_selected_gate clean-clone "$release_root" "$repo_root" "$source_head"
 	run_selected_gate cold-import "$release_root" "$repo_root" "$source_head"
+	verify_release_import_ready "$release_root"
+	run_selected_gate m1-fresh-ui "$release_root" "$repo_root" "$source_head"
+	run_selected_gate m1-production-entry "$release_root" "$repo_root" "$source_head"
 	run_selected_gate isolation "$release_root" "$repo_root" "$source_head"
 	run_selected_gate autosave "$release_root" "$repo_root" "$source_head"
+	verify_release_import_ready "$release_root"
 	run_selected_gate recovery-ui "$release_root" "$repo_root" "$source_head"
 	run_selected_gate transaction-reconciliation "$release_root" "$repo_root" "$source_head"
 	run_selected_gate capture-lock-wait "$release_root" "$repo_root" "$source_head"
 	run_selected_gate capture-atomic "$release_root" "$repo_root" "$source_head"
 	run_selected_gate timeout-owner-records "$release_root" "$repo_root" "$source_head"
 	run_selected_gate timeout-guards "$release_root" "$repo_root" "$source_head"
+	verify_release_import_ready "$release_root"
 	run_selected_gate cold-start "$release_root" "$repo_root" "$source_head"
 	run_selected_gate screenshots "$release_root" "$repo_root" "$source_head"
 }
@@ -232,4 +249,4 @@ if [[ "$overall_status" -ne 0 ]]; then
 	exit "$overall_status"
 fi
 
-echo "RELEASE_HEALTH_OK isolation_timeout=${RELEASE_HEALTH_ISOLATION_TIMEOUT_SECONDS:-180}s autosave_timeout=${RELEASE_HEALTH_AUTOSAVE_TIMEOUT_SECONDS:-65}s recovery_ui_timeout=${RELEASE_HEALTH_RECOVERY_UI_TIMEOUT_SECONDS:-95}s transaction_timeout=${RELEASE_HEALTH_TRANSACTION_TIMEOUT_SECONDS:-45}s capture_lock_wait_timeout=${RELEASE_HEALTH_CAPTURE_LOCK_WAIT_TIMEOUT_SECONDS:-10}s capture_atomic_timeout=${RELEASE_HEALTH_CAPTURE_ATOMIC_TIMEOUT_SECONDS:-30}s timeout_owner_records_timeout=${RELEASE_HEALTH_TIMEOUT_OWNER_RECORDS_TIMEOUT_SECONDS:-10}s timeout_guards_timeout=${RELEASE_HEALTH_TIMEOUT_GUARDS_TIMEOUT_SECONDS:-55}s clone_timeout=${RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS:-45}s cold_import_timeout=${RELEASE_HEALTH_COLD_IMPORT_TIMEOUT_SECONDS:-40}s cold_start_timeout=${RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS:-25}s screenshots_timeout=${RELEASE_HEALTH_SCREENSHOTS_TIMEOUT_SECONDS:-110}s screenshot_inner_timeout=${RELEASE_HEALTH_SCREENSHOT_INNER_TIMEOUT_SECONDS:-90}s overall_timeout=${overall_timeout}s scratch_roots=clean-on-exit"
+echo "RELEASE_HEALTH_OK isolation_timeout=${RELEASE_HEALTH_ISOLATION_TIMEOUT_SECONDS:-180}s autosave_timeout=${RELEASE_HEALTH_AUTOSAVE_TIMEOUT_SECONDS:-65}s recovery_ui_timeout=${RELEASE_HEALTH_RECOVERY_UI_TIMEOUT_SECONDS:-95}s transaction_timeout=${RELEASE_HEALTH_TRANSACTION_TIMEOUT_SECONDS:-45}s capture_lock_wait_timeout=${RELEASE_HEALTH_CAPTURE_LOCK_WAIT_TIMEOUT_SECONDS:-10}s capture_atomic_timeout=${RELEASE_HEALTH_CAPTURE_ATOMIC_TIMEOUT_SECONDS:-30}s timeout_owner_records_timeout=${RELEASE_HEALTH_TIMEOUT_OWNER_RECORDS_TIMEOUT_SECONDS:-10}s timeout_guards_timeout=${RELEASE_HEALTH_TIMEOUT_GUARDS_TIMEOUT_SECONDS:-55}s clone_timeout=${RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS:-45}s cold_import_timeout=${RELEASE_HEALTH_COLD_IMPORT_TIMEOUT_SECONDS:-40}s m1_fresh_ui_timeout=${RELEASE_HEALTH_M1_FRESH_UI_TIMEOUT_SECONDS:-25}s m1_production_timeout=${RELEASE_HEALTH_M1_PRODUCTION_TIMEOUT_SECONDS:-70}s cold_start_timeout=${RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS:-25}s screenshots_timeout=${RELEASE_HEALTH_SCREENSHOTS_TIMEOUT_SECONDS:-110}s screenshot_inner_timeout=${RELEASE_HEALTH_SCREENSHOT_INNER_TIMEOUT_SECONDS:-90}s overall_timeout=${overall_timeout}s scratch_roots=clean-on-exit"

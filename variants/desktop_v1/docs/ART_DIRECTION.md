@@ -230,3 +230,27 @@ Godot 4.7 在隔离用户目录中完成真实导入。12 项设置一致：
   58 assertions、既有截图 6 张、存档进程、5 组事务恢复、保存前恢复、
   主读 I/O、持久化保护 89 assertions、故障注入 1934 assertions，以及
   超时/进程组清理。
+
+## 13. M1-HIVE-BATTLE-WORLD-SLICE 扩展
+
+从 `b553dbf` 继续的首个纯视觉世界切片使用独立场景
+`scenes/art_m1/m1_hive_battle_world_slice.tscn`，不实例化 `GameSession`，
+不读写存档，也不改变默认可玩入口。它把左侧巢室生产、中央破口和右侧
+战场放进同一 16:9 镜头，持久 HUD 与底部状态轨道沿世界边缘铺设，避免
+后台卡片栅格。
+
+- 环境：`world_back_m1.png`、`world_mid_m1.png`、`world_fore_m1.png`，
+  均为 1920×1080、RGBA8 且无透明像素；中/前景源图以石墨键色保存，
+  `resources/art_m1/m1_layer_key_material.tres` 在 Godot 中做分层。
+- 房间：`room_buildable_m1.png`、`room_running_m1.png`、
+  `room_blocked_m1.png`，512² RGBA；开放缺口、闭合分段环、三尖阻断和
+  斜向阻断纹同时表达可建设/运行/阻断。
+- 单位：工蜂、噬咬体、根脉孢体、敌方护垒四枚 256² RGBA；低重心三角、
+  双颚、菌褶根叉、三尖盾面不是颜色专属编码。
+- VFX：资源反馈、接敌、命中、受创、死亡、撤离六枚 256² RGBA；分别用
+  种荚、相向楔、冲击射线、裂环、下坠碎片、左开楔口表达状态。
+- 来源、实际文件属性、SHA-256、Godot import 设置、预算和截图清单见
+  `docs/m1_hive_battle_world_slice_manifest.json`。本轮 built-in MCP
+  环境图请求返回 `service_error`，没有输出文件；所有正式 M1 位图均由
+  `tools/render_m1_world_slice.gd` 在仓库内生成，不把失败图或概念参考冒充
+  尺寸契约。

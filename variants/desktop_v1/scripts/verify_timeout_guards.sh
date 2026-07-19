@@ -448,6 +448,7 @@ expect_release_screenshot_timeout() {
 }
 
 cd "$project_root"
+./scripts/verify_timeout_preregistration_interrupt.sh
 expect_deleted_registry_pre_spawn_failure
 expect_registration_failure_cleanup registration-write-failure
 expect_registration_failure_cleanup registry-deleted-after-spawn
@@ -505,7 +506,7 @@ screenshot_leader_parent="$test_root/screenshot-leader-parent"
 expect_screenshot_leader_exit_cleanup "$screenshot_leader_parent" "$screenshot_project" "$test_root/screenshot-leader.pid"
 
 release_parent="$test_root/release-parent"
-for gate_name in isolation autosave recovery-ui transaction-reconciliation capture-lock-wait capture-atomic timeout-owner-records timeout-guards clean-clone cold-import cold-start screenshots; do
+for gate_name in isolation autosave recovery-ui transaction-reconciliation capture-lock-wait capture-atomic timeout-owner-records timeout-guards clean-clone cold-import m1-fresh-ui m1-production-entry cold-start screenshots; do
 	expect_timeout "release-$gate_name" "$release_parent" "$test_root/release-$gate_name.pid" \
 		env \
 			RELEASE_HEALTH_SCRATCH_PARENT="$release_parent" \
@@ -520,6 +521,8 @@ for gate_name in isolation autosave recovery-ui transaction-reconciliation captu
 			RELEASE_HEALTH_TIMEOUT_GUARDS_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_CLONE_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_COLD_IMPORT_TIMEOUT_SECONDS=1 \
+			RELEASE_HEALTH_M1_FRESH_UI_TIMEOUT_SECONDS=1 \
+			RELEASE_HEALTH_M1_PRODUCTION_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_COLD_START_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_SCREENSHOTS_TIMEOUT_SECONDS=1 \
 			RELEASE_HEALTH_KILL_AFTER_SECONDS=1 \
@@ -583,4 +586,4 @@ if [[ "${#HARD_TIMEOUT_ACTIVE_PIDS[@]}" -ne 0 ]] || \
 	exit 1
 fi
 guards_complete=1
-echo "TIMEOUT_GUARDS_OK registry_prespan=fail-closed registration_failure=reaped identity=boot,pidns,starttime stale=discarded leaderless_reused_pgid=discarded graph=iterative-bounded normal=clean supervisor_leader_exit=clean timeout=bounded term=clean kill=bounded release_cold_import_term=clean screenshot_nested_timeout=bounded screenshot_leader_exit=clean release_screenshots_continuous=2 release_screenshots_concurrent=2 release_subgates=12 overall=bounded pids=reaped pgids=reaped scratch_roots=clean"
+echo "TIMEOUT_GUARDS_OK preregistration_interrupt=TERM,INT-exact-reaped registry_prespan=fail-closed registration_failure=reaped identity=boot,pidns,starttime stale=discarded leaderless_reused_pgid=discarded graph=iterative-bounded normal=clean supervisor_leader_exit=clean timeout=bounded term=clean kill=bounded release_cold_import_term=clean screenshot_nested_timeout=bounded screenshot_leader_exit=clean release_screenshots_continuous=2 release_screenshots_concurrent=2 release_subgates=14 overall=bounded pids=reaped pgids=reaped scratch_roots=clean"

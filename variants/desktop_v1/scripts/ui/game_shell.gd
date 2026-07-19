@@ -1,6 +1,7 @@
 extends VBoxContainer
 
 signal return_to_title_requested
+signal m1_presenter_lifecycle(page_id: String, mounted: bool, epoch: int)
 
 const ThemeFactory = preload("res://scripts/ui/theme_factory.gd")
 const UI = preload("res://scripts/ui/ui_utils.gd")
@@ -35,6 +36,9 @@ var notice_band: PanelContainer
 var notice_label: Label
 var notice_timer: Timer
 var session: Node
+var m1_lifecycle_epoch := 0
+var m1_last_lifecycle_page := ""
+var m1_last_lifecycle_mounted := false
 
 func _init(session_override: Node = null) -> void:
 	session = session_override
@@ -53,6 +57,7 @@ func _ready() -> void:
 	_build_notice()
 	session.state_changed.connect(_on_state_changed)
 	session.notice_posted.connect(_show_notice)
+	session.battle_ended.connect(_on_battle_ended)
 	_on_state_changed(session.snapshot())
 
 func _build_status_bar() -> void:
@@ -137,6 +142,7 @@ func _build_navigation() -> void:
 
 func _build_battle_strip() -> void:
 	battle_strip = PanelContainer.new()
+	battle_strip.name = "BattleStrip"
 	battle_strip.custom_minimum_size.y = 44
 	add_child(battle_strip)
 	var row := HBoxContainer.new()
@@ -150,6 +156,7 @@ func _build_battle_strip() -> void:
 	battle_state_icon.visible = false
 	row.add_child(battle_state_icon)
 	battle_text = UI.label("当前无主动战场", "Muted")
+	battle_text.name = "BattleText"
 	battle_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(battle_text)
 	var return_button := UI.button("返回战场", _show_page.bind("battle"), "PrimaryButton")
@@ -170,8 +177,8 @@ func _build_page_host() -> void:
 	host.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	margin.add_child(host)
 	pages = {
-		"hive": HivePage.new(),
-		"map": MapPage.new(),
+		"hive": HivePage.new(session),
+		"map": MapPage.new(session),
 		"battle": BattlePage.new(session),
 		"evolution": EvolutionPage.new(),
 		"swarm": SwarmPage.new(),
@@ -180,13 +187,17 @@ func _build_page_host() -> void:
 	}
 	for id in pages.keys():
 		var page: Control = pages[id]
+		if page.has_signal("m1_presenter_lifecycle"):
+			page.connect("m1_presenter_lifecycle", _on_m1_presenter_lifecycle.bind(String(id)))
 		page.visible = id == current_page
 		page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		page.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		host.add_child(page)
 	pages.map.open_battle_requested.connect(_show_page.bind("battle"))
+	pages.battle.battle_result_confirmed.connect(_show_page.bind("map"))
 	pages.evolution.open_ascension_requested.connect(_show_page.bind("ascension"))
 	pages.ascension.back_requested.connect(_show_page.bind("evolution"))
+	_set_page_active(pages[current_page], true)
 
 func _build_notice() -> void:
 	notice_band = PanelContainer.new()
@@ -211,7 +222,8 @@ func _on_state_changed(snapshot: Dictionary) -> void:
 	tick_label.text = "T+%05d" % int(snapshot.tick)
 	for speed in speed_buttons.keys():
 		speed_buttons[speed].theme_type_variation = "NavActiveButton" if int(snapshot.speed) == int(speed) else "NavButton"
-	for page in pages.values():
+	var page: Control = pages.get(current_page)
+	if is_instance_valid(page):
 		page.set_snapshot(snapshot)
 	_update_battle_strip(snapshot)
 	var completion: Dictionary = session.completion_summary()
@@ -240,12 +252,42 @@ func _update_battle_strip(snapshot: Dictionary) -> void:
 func _show_page(page_id: String) -> void:
 	if not pages.has(page_id):
 		return
+	var previous: Control = pages.get(current_page)
+	if is_instance_valid(previous) and current_page != page_id:
+		_set_page_active(previous, false)
 	current_page = page_id
 	for id in pages.keys():
 		pages[id].visible = id == page_id
+	var current: Control = pages[page_id]
+	current.set_snapshot(session.snapshot())
+	_set_page_active(current, true)
 	for id in nav_buttons.keys():
 		var selected: bool = String(id) == page_id or (page_id == "ascension" and String(id) == "evolution")
 		nav_buttons[id].theme_type_variation = "NavActiveButton" if selected else "NavButton"
+
+func _set_page_active(page: Control, active: bool) -> void:
+	if is_instance_valid(page) and page.has_method("set_active"):
+		page.call("set_active", active)
+
+func _on_m1_presenter_lifecycle(mounted: bool, page_id: String) -> void:
+	m1_lifecycle_epoch += 1
+	m1_last_lifecycle_page = page_id
+	m1_last_lifecycle_mounted = mounted
+	m1_presenter_lifecycle.emit(page_id, mounted, m1_lifecycle_epoch)
+
+func m1_lifecycle_snapshot() -> Dictionary:
+	return {
+		"epoch": m1_lifecycle_epoch,
+		"page": m1_last_lifecycle_page,
+		"mounted": m1_last_lifecycle_mounted,
+	}
+
+func _on_battle_ended(node_id: String, captured: bool) -> void:
+	var battle_page: Control = pages.get("battle")
+	if current_page == "battle" and is_instance_valid(battle_page) and battle_page.has_method("present_battle_result"):
+		battle_page.call("present_battle_result", node_id, captured, session.snapshot())
+		return
+	_show_page("map")
 
 func _set_speed(speed: int) -> void:
 	session.set_speed(speed)
@@ -267,3 +309,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		var mode := DisplayServer.window_get_mode()
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if mode == DisplayServer.WINDOW_MODE_FULLSCREEN else DisplayServer.WINDOW_MODE_FULLSCREEN)
 		get_viewport().set_input_as_handled()
+
+func _exit_tree() -> void:
+	if not is_instance_valid(session):
+		return
+	if session.state_changed.is_connected(_on_state_changed):
+		session.state_changed.disconnect(_on_state_changed)
+	if session.notice_posted.is_connected(_show_notice):
+		session.notice_posted.disconnect(_show_notice)
+	if session.battle_ended.is_connected(_on_battle_ended):
+		session.battle_ended.disconnect(_on_battle_ended)

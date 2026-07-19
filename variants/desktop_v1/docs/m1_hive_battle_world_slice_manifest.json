@@ -1,0 +1,122 @@
+{
+  "id": "M1-HIVE-BATTLE-WORLD-SLICE",
+  "art_revision": "m1-art-v2-rail78",
+  "baseline": "500ab48bff286e30580f7af122761fd16cbfcce8",
+  "asset_baseline": "2b80052eef4870d2a8d400482d4d6a4cb7f4533c",
+  "scope": "runtime_visual_scale_and_rail_safe_zone_evidence; GameSession_SaveService_schema_rules_input_and_runtime_assets_unchanged",
+  "source_policy": {
+    "provider": "built-in MCP mcp__multica_imagegen__image_gen",
+    "model": "gpt-image-2 (tool reported)",
+    "external_downloads": false,
+    "runtime_external_links": false,
+    "source_records": "docs/art_m1_sources/PROMPTS.md",
+    "derivation": "two built-in PNGs; local ffmpeg resize/tonal depth variants, chroma-key cutout and PNG compression",
+    "environment_source": {
+      "file": "docs/art_m1_sources/art_m2_environment_gpt-image-2_1672x941.png",
+      "requested_size": "1792x1024",
+      "actual_size": [1672, 941],
+      "bytes": 3005449,
+      "sha256": "0f01094229eae5f157d208e4dd378fcbdffa537493e1db0b1654eba7e37b0b7f",
+      "elapsed_seconds": 83.17,
+      "alpha": "RGB source; opaque"
+    },
+    "specimen_source": {
+      "file": "docs/art_m1_sources/art_m2_specimen_atlas_gpt-image-2_1254x1254.png",
+      "requested_size": "2048x2048",
+      "actual_size": [1254, 1254],
+      "bytes": 2418352,
+      "sha256": "74616efd58fb48ce5d004335b8d0fc7fa6a98a22d881ae1c9c66009bb59753c6",
+      "elapsed_seconds": 218.52,
+      "alpha": "RGB chroma-key source; cutouts are RGBA"
+    }
+  },
+  "import_defaults": {
+    "format": "PNG",
+    "compress/mode": 0,
+    "compress/high_quality": false,
+    "mipmaps/generate": false,
+    "repeat": false,
+    "process/fix_alpha_border": true,
+    "process/premult_alpha": false,
+    "detect_3d/compress_to": 1,
+    "atlas": false,
+    "filter": "project default",
+    "normal_map": false
+  },
+  "budget": {
+    "runtime_asset_png_bytes": 13458456,
+    "source_record_png_bytes": 5423801,
+    "runtime_plus_source_bytes": 18882257,
+    "runtime_asset_mib": 12.83,
+    "expanded_vram_bytes_rgba8": 30650368,
+    "expanded_vram_mib_rgba8": 29.23,
+    "recommended_vram_limit_mib": 32,
+    "single_longest_edge_px": 1920
+  },
+  "assets": [
+    {"file":"assets/art_m1/world_back_m1.png","use":"opaque distant environment plate; darkened/softened depth","size":[1920,1080],"alpha":"RGBA8, all pixels opaque","bytes":1613071,"sha256":"2ac7309ee766b3f7755ad4a3517d15538bd89db8811166f3ed41ee62ac1adad6","source":"environment source, ffmpeg tonal depth pass"},
+    {"file":"assets/art_m1/world_mid_m1.png","use":"opaque middle environment plate; hive, transit throat and battlefield","size":[1920,1080],"alpha":"RGBA8, all pixels opaque","bytes":4202685,"sha256":"b8f5c5b29683659d354eebe0c35982a196d6512f3db60b6ee68d01ad69e3044a","source":"environment source, ffmpeg neutral depth pass"},
+    {"file":"assets/art_m1/world_fore_m1.png","use":"opaque foreground environment plate; sharpened floor, roots and equipment","size":[1920,1080],"alpha":"RGBA8, all pixels opaque","bytes":4741869,"sha256":"f68c4dd6980258421b486efa65c2be23067e6fbae3bafe75031a23f2eb066883","source":"environment source, ffmpeg contrast/sharpen depth pass"},
+    {"file":"assets/art_m1/room_buildable_m1.png","use":"open socket; circular rib notch and cyan locator nodes","size":[512,512],"alpha":"RGBA8, transparent corners","bytes":544020,"sha256":"d3b23e2294d8f9fd6ece6d59ba3cb94132e2fbba70f85ed9976b27e8057c3f87","source":"specimen atlas cell 1, chroma-key cutout"},
+    {"file":"assets/art_m1/room_running_m1.png","use":"running metabolic room; closed membrane ring and amber core","size":[512,512],"alpha":"RGBA8, transparent corners","bytes":597462,"sha256":"5751d8480d9fb022e464d2ed98e9ed089f25fa9ffce7c13d7c81b4417089f920","source":"specimen atlas cell 2, chroma-key cutout"},
+    {"file":"assets/art_m1/room_blocked_m1.png","use":"blocked room; fractured shell, diagonal scar and root restraint","size":[512,512],"alpha":"RGBA8, transparent corners","bytes":566544,"sha256":"8502a2206a4da6edb865f0e60a7c8bb1035970c590c7ad4e0c4ec670defff5ab","source":"specimen atlas cell 3, chroma-key cutout"},
+    {"file":"assets/art_m1/unit_worker_m1.png","use":"worker; low six-legged root-carrier silhouette","size":[256,256],"alpha":"RGBA8, transparent corners","bytes":119946,"sha256":"0b64d87fc69392a8d74f99a1d5b70dd139af44923c3f757d429af8e60bcee96c","source":"specimen atlas cell 4, chroma-key cutout"},
+    {"file":"assets/art_m1/unit_biter_m1.png","use":"biter; forward wedge carapace and opposed mandibles","size":[256,256],"alpha":"RGBA8, transparent corners","bytes":117683,"sha256":"c00e461e8564790525e791991a8b3fd4ed1af45fba31319c89c826ceb6716e95","source":"specimen atlas cell 5, chroma-key cutout"},
+    {"file":"assets/art_m1/unit_spore_m1.png","use":"root-spore; spherical spore sac with trailing roots","size":[256,256],"alpha":"RGBA8, transparent corners","bytes":125497,"sha256":"7c7e96e1a08bc562a125a7acfa645c335b5beb33e4c7cf90325d1ca4f55fb1a8","source":"specimen atlas cell 6, chroma-key cutout"},
+    {"file":"assets/art_m1/unit_enemy_m1.png","use":"enemy; plated threat shield with vermilion fracture seams","size":[256,256],"alpha":"RGBA8, transparent corners","bytes":120551,"sha256":"f4371b77ce730e1e037cbab549eb20108ed02b13fa47eb61d44690ed97bb18ed","source":"specimen atlas cell 7, chroma-key cutout"},
+    {"file":"assets/art_m1/vfx_resource_m1.png","use":"resource; upward root growth and seed motes","size":[256,256],"alpha":"RGBA8, transparent corners","bytes":121822,"sha256":"8b53173aa89b7ef62e14aaccc2c9498855fffb71dca58d0a79d0daf20e65326e","source":"specimen atlas cell 8, chroma-key cutout"},
+    {"file":"assets/art_m1/vfx_contact_m1.png","use":"contact; opposing cyan/vermilion shard clash","size":[256,256],"alpha":"RGBA8, transparent corners","bytes":116015,"sha256":"a5265696547c7e0ed283f947341bae9b840212c247ec764c774ac68733dd63be","source":"specimen atlas cell 9, chroma-key cutout"},
+    {"file":"assets/art_m1/vfx_hit_m1.png","use":"hit; asymmetrical thermal amber impact burst","size":[256,256],"alpha":"RGBA8, transparent corners","bytes":126041,"sha256":"b9a9e1fb3a4dafab6e953e09e7c2370d9e1342cfe84c67cb28d1770b8e8e9cf3","source":"specimen atlas cell 10, chroma-key cutout"},
+    {"file":"assets/art_m1/vfx_hurt_m1.png","use":"hurt; fractured shell ring and displaced fragments","size":[256,256],"alpha":"RGBA8, transparent corners","bytes":126833,"sha256":"44168ed68069ad6d6e19c77fa1f9ea79851ebfbe81e849368b2a4085342152cc","source":"specimen atlas cell 11, chroma-key cutout"},
+    {"file":"assets/art_m1/vfx_death_m1.png","use":"death; separated carapace shards and root release","size":[256,256],"alpha":"RGBA8, transparent corners","bytes":125123,"sha256":"82d385ee911c15fffd49139181dcc6bb1bb24d91cca43b04be7d872644af9d8a","source":"specimen atlas cell 12, chroma-key cutout"},
+    {"file":"assets/art_m1/vfx_retreat_m1.png","use":"retreat; reverse root trail with left-opening wedge","size":[256,256],"alpha":"RGBA8, transparent corners","bytes":93294,"sha256":"b5585629ff7542850939aa513d293458a32095be461827034de0ae7d08a6ac30","source":"specimen atlas cell 13, chroma-key cutout"}
+  ],
+  "preview_evidence": {
+    "raw_capture_command": "M1_CAPTURE_TIMEOUT_SECONDS=120 ./scripts/capture_m1_world_slice.sh",
+    "annotation_command": "./scripts/annotate_m1_world_slice.sh",
+    "raw_capture_count": 9,
+    "annotated_count": 6,
+    "annotation": "HUD SAFE 0 TO 14 PCT; ACTION FIELD 14 TO 78 PCT; RAIL RESERVED 78 TO 100 PCT",
+    "rail_safe_zone_contract": {
+      "design_height_px": 1080,
+      "reserved_start_percent": 78.0,
+      "reserved_start_design_y": 842.4,
+      "actual_icon_top_design_y": 848,
+      "actual_icon_top_percent": 78.5185,
+      "actual_rail_line_design_y": 865,
+      "actual_rail_line_percent": 80.0926,
+      "reserved_start_pixels_by_viewport": {
+        "1280x720": 561,
+        "1600x900": 702,
+        "1920x1080": 842
+      },
+      "semantic_contour_max_y_design": {
+        "contact": 671,
+        "hit": 607,
+        "hurt": 622,
+        "death": 634,
+        "retreat": 588
+      },
+      "assertion": "engagement and retreat semantic VFX contours are above the 78 percent reserved-zone boundary at all three captured viewports"
+    },
+    "raw_capture_files": [
+      {"file":"artifacts/art_m1/captures/operations_1280x720.png","size":[1280,720],"bytes":2285215,"sha256":"b3b3cb3097aee6af7e0b1c06aa6815062ae2405a859e94adacd2e688f5ae0406"},
+      {"file":"artifacts/art_m1/captures/operations_1600x900.png","size":[1600,900],"bytes":3422457,"sha256":"bdbfcc99a6118121040ddd2813da0da5871da4f9e9b801c4d3a32b287c5f5ee7"},
+      {"file":"artifacts/art_m1/captures/operations_1920x1080.png","size":[1920,1080],"bytes":4780099,"sha256":"f6f21e9f05b6882bc11b64050e2fe691e389043bc8a9da0719699209df5de5fb"},
+      {"file":"artifacts/art_m1/captures/engagement_1280x720.png","size":[1280,720],"bytes":2289964,"sha256":"89a5d428990ce712f0bba6e4151f36751550d931e49a18fdd00899484b5ceed8"},
+      {"file":"artifacts/art_m1/captures/engagement_1600x900.png","size":[1600,900],"bytes":3430957,"sha256":"1c38e04a2205346ce8d14b72d8ee05ccd161e2f211e5251f75389c98aeff4db0"},
+      {"file":"artifacts/art_m1/captures/engagement_1920x1080.png","size":[1920,1080],"bytes":4792178,"sha256":"2d754f7c5e7bb894096d30d59ab77a83d7f57cc977679ba57a3dd2b318ff96b6"},
+      {"file":"artifacts/art_m1/captures/retreat_1280x720.png","size":[1280,720],"bytes":2288827,"sha256":"fe2111fb6dc36beb9ba25b7bcd4804bb082e8e3a69685f35f60adcda659c6f68"},
+      {"file":"artifacts/art_m1/captures/retreat_1600x900.png","size":[1600,900],"bytes":3428909,"sha256":"7c6bf870c4e4da6ddae27a7a4e7a2e4ea0d1121152a069a3af04844000b3ce2e"},
+      {"file":"artifacts/art_m1/captures/retreat_1920x1080.png","size":[1920,1080],"bytes":4789215,"sha256":"860f807121e9176092e4e1a9ae67132d318e65e88322511f27f128a0126d4967"}
+    ],
+    "annotated_files": [
+      {"file":"artifacts/art_m1/annotations/engagement_1280x720_rail78-safe.png","size":[1280,720],"bytes":1926498,"sha256":"b85e2a0bd89d457060c5a727b25ec8f8e19f1baaa15858628cd6bf70bf784423"},
+      {"file":"artifacts/art_m1/annotations/engagement_1600x900_rail78-safe.png","size":[1600,900],"bytes":2972194,"sha256":"a63b4bffcff972903607761cf8fd6b03d53b99c307c8e6b276c7e4dbde7f59e4"},
+      {"file":"artifacts/art_m1/annotations/engagement_1920x1080_rail78-safe.png","size":[1920,1080],"bytes":4222879,"sha256":"8cced80f45769c1e37cc5422c90241485f64d9e4528b63747efd3b430e652ef7"},
+      {"file":"artifacts/art_m1/annotations/retreat_1280x720_rail78-safe.png","size":[1280,720],"bytes":1922607,"sha256":"5ecd321353e24f23f41e0629cb9ab14f61e666e3f2420e43f94e0aa76d2c26ef"},
+      {"file":"artifacts/art_m1/annotations/retreat_1600x900_rail78-safe.png","size":[1600,900],"bytes":2966592,"sha256":"535eb81e8e6493a3ff4631d80efc133faa7d0bea7f27f263c59096ad855fe5e5"},
+      {"file":"artifacts/art_m1/annotations/retreat_1920x1080_rail78-safe.png","size":[1920,1080],"bytes":4212717,"sha256":"6d0845b565d07f6751decc8defaae68012fd52a871de61500db8bbf44e431c3b"}
+    ]
+  }
+}

@@ -21,13 +21,8 @@ exit_ready_file="$test_root/exit-ready"
 timeout_pid_file="$test_root/timeout.pid"
 HARD_TIMEOUT_TEST_SPAWN_PID_FILE="$timeout_pid_file" \
 run_with_hard_timeout "acceptance-regressions" "${ACCEPTANCE_TIMEOUT_SECONDS:-80}" "${ACCEPTANCE_KILL_AFTER_SECONDS:-5}" \
-	xvfb-run -a env \
-		HOME="$test_root/home" \
-		XDG_CONFIG_HOME="$test_root/config" \
-		XDG_CACHE_HOME="$test_root/cache" \
-		XDG_DATA_HOME="$test_root/data" \
-		godot4 --audio-driver Dummy --path . -s res://tests/acceptance_regression_runner.gd -- \
-		"--scratch-data-root=$test_root/data" "--exit-ready-file=$exit_ready_file" > "$acceptance_log" 2>&1 || status=$?
+	"$project_root/scripts/run_acceptance_segments.sh" "$project_root" "$test_root" \
+		> "$acceptance_log" 2>&1 || status=$?
 cat "$acceptance_log"
 if [[ "$status" -ne 0 ]]; then
 	exit "$status"
@@ -35,6 +30,28 @@ fi
 
 if [[ ! -s "$exit_ready_file" ]] || ! rg -q '^ACCEPTANCE_ASSERTIONS_OK cases=5 resolutions=3 assertions=' "$acceptance_log"; then
 	echo "Acceptance process exited without publishing its post-cleanup lifecycle marker." >&2
+	exit 1
+fi
+for segment in recovery core; do
+	if ! rg -q "^ACCEPTANCE_SEGMENT_ORCHESTRATION segment=$segment phase=start mode=(rendered|dummy) pid=[0-9]+ pgid=[0-9]+ start_ns=[0-9]+$" "$acceptance_log" || \
+		! rg -q "^ACCEPTANCE_SEGMENT_ORCHESTRATION segment=$segment phase=reaped mode=(rendered|dummy) status=0 pid=[0-9]+ pgid=[0-9]+ pid_alive=0 pgid_alive=0 elapsed_ms=[0-9]+$" "$acceptance_log"; then
+		echo "Acceptance $segment segment was not started and reaped by the bounded orchestrator." >&2
+		exit 1
+	fi
+done
+mapfile -t segment_phases < <(sed -n -E 's/^ACCEPTANCE_SEGMENT_ORCHESTRATION segment=([^ ]+) phase=([^ ]+).*/\1:\2/p' "$acceptance_log")
+if [[ "${segment_phases[*]:-}" != "recovery:start recovery:reaped core:start core:reaped" ]]; then
+	echo "Acceptance segments did not preserve the exclusive recovery-before-core order: ${segment_phases[*]:-none}" >&2
+	exit 1
+fi
+if ! rg -q '^ACCEPTANCE_SEGMENT_ISOLATION_OK filesystems=10-distinct displays=:[0-9]+,:[0-9]+ renderers=recovery-rendered,core-dummy$' "$acceptance_log"; then
+	echo "Acceptance segments did not prove canonical filesystem/display isolation." >&2
+	exit 1
+fi
+cache_before="$(sed -n -E 's/^ACCEPTANCE_PROJECT_CACHE phase=before fingerprint=([0-9a-f]{64}) files=[0-9]+$/\1/p' "$acceptance_log")"
+cache_after="$(sed -n -E 's/^ACCEPTANCE_PROJECT_CACHE phase=after fingerprint=([0-9a-f]{64}) files=[0-9]+$/\1/p' "$acceptance_log")"
+if [[ -z "$cache_before" || "$cache_before" != "$cache_after" ]]; then
+	echo "Acceptance shared project cache fingerprint changed or is missing." >&2
 	exit 1
 fi
 timeout_pid="$(<"$timeout_pid_file")"
@@ -52,5 +69,5 @@ if [[ "$exit_delay_seconds" -gt 5 ]]; then
 fi
 
 assertion_summary="$(rg '^ACCEPTANCE_ASSERTIONS_OK cases=5 resolutions=3 assertions=' "$acceptance_log" | tail -n 1)"
-echo "${assertion_summary/ACCEPTANCE_ASSERTIONS_OK/ACCEPTANCE_REGRESSIONS_OK} lifecycle_exit_seconds=$exit_delay_seconds process_tree=gone"
+echo "${assertion_summary/ACCEPTANCE_ASSERTIONS_OK/ACCEPTANCE_REGRESSIONS_OK} lifecycle_exit_seconds=$exit_delay_seconds isolation=canonical-distinct project_cache=unchanged pids_pgids=reaped process_tree=gone"
 echo "VERIFY_ACCEPTANCE_REGRESSIONS_OK timeout=${ACCEPTANCE_TIMEOUT_SECONDS:-80}s scratch=clean-on-exit"
