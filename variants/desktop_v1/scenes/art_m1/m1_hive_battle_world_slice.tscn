@@ -1,0 +1,47 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://scripts/art_m1/m1_world_slice.gd" id="1_world"]
+[ext_resource type="Texture2D" path="res://assets/art_m1/world_back_m1.png" id="2_back"]
+[ext_resource type="Texture2D" path="res://assets/art_m1/world_mid_m1.png" id="3_mid"]
+[ext_resource type="Texture2D" path="res://assets/art_m1/world_fore_m1.png" id="4_fore"]
+[ext_resource type="Material" path="res://resources/art_m1/m1_layer_key_material.tres" id="5_key"]
+
+[node name="WorldRoot" type="Node2D"]
+script = ExtResource("1_world")
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(960, 540)
+enabled = true
+position_smoothing_enabled = false
+
+[node name="Environment" type="Node2D" parent="."]
+z_index = -10
+
+[node name="Back" type="Sprite2D" parent="Environment"]
+texture_filter = 1
+position = Vector2(960, 540)
+texture = ExtResource("2_back")
+
+[node name="Mid" type="Sprite2D" parent="Environment"]
+texture_filter = 1
+position = Vector2(960, 540)
+material = ExtResource("5_key")
+texture = ExtResource("3_mid")
+
+[node name="Fore" type="Sprite2D" parent="Environment"]
+texture_filter = 1
+position = Vector2(960, 540)
+material = ExtResource("5_key")
+texture = ExtResource("4_fore")
+
+[node name="Rooms" type="Node2D" parent="."]
+z_index = 10
+
+[node name="Units" type="Node2D" parent="."]
+z_index = 20
+
+[node name="PhaseVFX" type="Node2D" parent="."]
+z_index = 30
+
+[node name="EventVFX" type="Node2D" parent="."]
+z_index = 40

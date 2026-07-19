@@ -7,6 +7,9 @@ fi
 
 if [[ "${HANG_MODE:-wait}" == "leader_exit" ]]; then
 	nohup sleep 300 >/dev/null 2>&1 &
+elif [[ "${HANG_MODE:-wait}" == "ignore_term" ]]; then
+	trap '' TERM
+	bash -c 'trap "" TERM; while true; do sleep 1; done' &
 else
 	sleep 300 &
 fi

@@ -1,10 +1,12 @@
 extends VBoxContainer
 
 signal return_to_title_requested
+signal m1_presenter_lifecycle(page_id: String, mounted: bool, epoch: int)
 
 const ThemeFactory = preload("res://scripts/ui/theme_factory.gd")
 const UI = preload("res://scripts/ui/ui_utils.gd")
 const BrandMark = preload("res://scripts/ui/brand_mark.gd")
+const ArtAssets = preload("res://scripts/ui/art_assets.gd")
 const HivePage = preload("res://scripts/ui/hive_page.gd")
 const MapPage = preload("res://scripts/ui/map_page.gd")
 const BattlePage = preload("res://scripts/ui/battle_page.gd")
@@ -28,12 +30,22 @@ var resource_labels := {}
 var tick_label: Label
 var speed_buttons := {}
 var battle_strip: PanelContainer
+var battle_state_icon: TextureRect
 var battle_text: Label
 var notice_band: PanelContainer
 var notice_label: Label
 var notice_timer: Timer
+var session: Node
+var m1_lifecycle_epoch := 0
+var m1_last_lifecycle_page := ""
+var m1_last_lifecycle_mounted := false
+
+func _init(session_override: Node = null) -> void:
+	session = session_override
 
 func _ready() -> void:
+	if session == null:
+		session = get_node("/root/GameSession")
 	set_process_unhandled_input(true)
 	add_theme_constant_override("separation", 0)
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -43,9 +55,10 @@ func _ready() -> void:
 	_build_battle_strip()
 	_build_page_host()
 	_build_notice()
-	GameSession.state_changed.connect(_on_state_changed)
-	GameSession.notice_posted.connect(_show_notice)
-	_on_state_changed(GameSession.snapshot())
+	session.state_changed.connect(_on_state_changed)
+	session.notice_posted.connect(_show_notice)
+	session.battle_ended.connect(_on_battle_ended)
+	_on_state_changed(session.snapshot())
 
 func _build_status_bar() -> void:
 	var bar := PanelContainer.new()
@@ -69,8 +82,18 @@ func _build_status_bar() -> void:
 	row.add_child(UI.separator(true))
 	for key in ["biomass", "energy", "genes"]:
 		var metric := VBoxContainer.new()
-		metric.custom_minimum_size.x = 105
-		metric.add_child(UI.label({"biomass": "生物质", "energy": "储能", "genes": "基因"}[key], "Muted"))
+		metric.custom_minimum_size.x = 114
+		if key == "biomass":
+			var identity_row := HBoxContainer.new()
+			identity_row.add_theme_constant_override("separation", 5)
+			identity_row.add_child(UI.texture_rect(ArtAssets.STATE_RESOURCE, Vector2(20, 20)))
+			var resource_name := UI.label("生物质", "Muted")
+			resource_name.autowrap_mode = TextServer.AUTOWRAP_OFF
+			resource_name.custom_minimum_size.x = 54
+			identity_row.add_child(resource_name)
+			metric.add_child(identity_row)
+		else:
+			metric.add_child(UI.label({"energy": "储能", "genes": "基因"}[key], "Muted"))
 		var value := UI.label("0", "Metric")
 		metric.add_child(value)
 		resource_labels[key] = value
@@ -89,7 +112,7 @@ func _build_status_bar() -> void:
 		button.custom_minimum_size.x = 48
 		speed_group.add_child(button)
 		speed_buttons[speed] = button
-	row.add_child(UI.button("保存", GameSession.save_game))
+	row.add_child(UI.button("保存", session.save_game))
 
 func _build_navigation() -> void:
 	var band := ColorRect.new()
@@ -119,6 +142,7 @@ func _build_navigation() -> void:
 
 func _build_battle_strip() -> void:
 	battle_strip = PanelContainer.new()
+	battle_strip.name = "BattleStrip"
 	battle_strip.custom_minimum_size.y = 44
 	add_child(battle_strip)
 	var row := HBoxContainer.new()
@@ -128,7 +152,11 @@ func _build_battle_strip() -> void:
 	indicator.color = ThemeFactory.MUTED
 	indicator.custom_minimum_size = Vector2(6, 28)
 	row.add_child(indicator)
+	battle_state_icon = UI.texture_rect(ArtAssets.STATE_ENGAGED, Vector2(24, 24))
+	battle_state_icon.visible = false
+	row.add_child(battle_state_icon)
 	battle_text = UI.label("当前无主动战场", "Muted")
+	battle_text.name = "BattleText"
 	battle_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(battle_text)
 	var return_button := UI.button("返回战场", _show_page.bind("battle"), "PrimaryButton")
@@ -141,31 +169,35 @@ func _build_page_host() -> void:
 	margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	margin.add_theme_constant_override("margin_left", 18)
 	margin.add_theme_constant_override("margin_right", 18)
-	margin.add_theme_constant_override("margin_top", 14)
-	margin.add_theme_constant_override("margin_bottom", 14)
+	margin.add_theme_constant_override("margin_top", 7)
+	margin.add_theme_constant_override("margin_bottom", 7)
 	add_child(margin)
 	var host := VBoxContainer.new()
 	host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	host.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	margin.add_child(host)
 	pages = {
-		"hive": HivePage.new(),
-		"map": MapPage.new(),
-		"battle": BattlePage.new(),
+		"hive": HivePage.new(session),
+		"map": MapPage.new(session),
+		"battle": BattlePage.new(session),
 		"evolution": EvolutionPage.new(),
 		"swarm": SwarmPage.new(),
 		"ascension": AscensionPage.new(),
-		"system": SystemPage.new(),
+		"system": SystemPage.new(session),
 	}
 	for id in pages.keys():
 		var page: Control = pages[id]
+		if page.has_signal("m1_presenter_lifecycle"):
+			page.connect("m1_presenter_lifecycle", _on_m1_presenter_lifecycle.bind(String(id)))
 		page.visible = id == current_page
 		page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		page.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		host.add_child(page)
 	pages.map.open_battle_requested.connect(_show_page.bind("battle"))
+	pages.battle.battle_result_confirmed.connect(_show_page.bind("map"))
 	pages.evolution.open_ascension_requested.connect(_show_page.bind("ascension"))
 	pages.ascension.back_requested.connect(_show_page.bind("evolution"))
+	_set_page_active(pages[current_page], true)
 
 func _build_notice() -> void:
 	notice_band = PanelContainer.new()
@@ -190,10 +222,11 @@ func _on_state_changed(snapshot: Dictionary) -> void:
 	tick_label.text = "T+%05d" % int(snapshot.tick)
 	for speed in speed_buttons.keys():
 		speed_buttons[speed].theme_type_variation = "NavActiveButton" if int(snapshot.speed) == int(speed) else "NavButton"
-	for page in pages.values():
+	var page: Control = pages.get(current_page)
+	if is_instance_valid(page):
 		page.set_snapshot(snapshot)
 	_update_battle_strip(snapshot)
-	var completion := GameSession.completion_summary()
+	var completion: Dictionary = session.completion_summary()
 	var completion_label := find_child("CompletionLabel", true, false) as Label
 	if completion_label:
 		completion_label.text = "首版里程碑 %d / 14" % completion.completed
@@ -202,13 +235,15 @@ func _update_battle_strip(snapshot: Dictionary) -> void:
 	var return_button := battle_strip.find_child("ReturnBattleButton", true, false) as Button
 	var indicator := battle_strip.find_child("Indicator", true, false) as ColorRect
 	if snapshot.active_battle.is_empty():
+		battle_state_icon.visible = false
 		battle_text.text = "当前无主动战场 · 区域节点保持持久状态"
 		battle_text.theme_type_variation = "Muted"
 		return_button.disabled = true
 		indicator.color = ThemeFactory.MUTED
 	else:
+		battle_state_icon.visible = true
 		var battle: Dictionary = snapshot.active_battle
-		var node := GameSession.node_by_id(battle.node_id)
+		var node: Dictionary = session.node_by_id(battle.node_id)
 		battle_text.text = "%s  ·  敌军 %d  ·  结构 %d  ·  战损 %d" % [node.name, battle.enemy, battle.structure_hp, battle.losses]
 		battle_text.theme_type_variation = "Warning"
 		return_button.disabled = false
@@ -217,15 +252,45 @@ func _update_battle_strip(snapshot: Dictionary) -> void:
 func _show_page(page_id: String) -> void:
 	if not pages.has(page_id):
 		return
+	var previous: Control = pages.get(current_page)
+	if is_instance_valid(previous) and current_page != page_id:
+		_set_page_active(previous, false)
 	current_page = page_id
 	for id in pages.keys():
 		pages[id].visible = id == page_id
+	var current: Control = pages[page_id]
+	current.set_snapshot(session.snapshot())
+	_set_page_active(current, true)
 	for id in nav_buttons.keys():
 		var selected: bool = String(id) == page_id or (page_id == "ascension" and String(id) == "evolution")
 		nav_buttons[id].theme_type_variation = "NavActiveButton" if selected else "NavButton"
 
+func _set_page_active(page: Control, active: bool) -> void:
+	if is_instance_valid(page) and page.has_method("set_active"):
+		page.call("set_active", active)
+
+func _on_m1_presenter_lifecycle(mounted: bool, page_id: String) -> void:
+	m1_lifecycle_epoch += 1
+	m1_last_lifecycle_page = page_id
+	m1_last_lifecycle_mounted = mounted
+	m1_presenter_lifecycle.emit(page_id, mounted, m1_lifecycle_epoch)
+
+func m1_lifecycle_snapshot() -> Dictionary:
+	return {
+		"epoch": m1_lifecycle_epoch,
+		"page": m1_last_lifecycle_page,
+		"mounted": m1_last_lifecycle_mounted,
+	}
+
+func _on_battle_ended(node_id: String, captured: bool) -> void:
+	var battle_page: Control = pages.get("battle")
+	if current_page == "battle" and is_instance_valid(battle_page) and battle_page.has_method("present_battle_result"):
+		battle_page.call("present_battle_result", node_id, captured, session.snapshot())
+		return
+	_show_page("map")
+
 func _set_speed(speed: int) -> void:
-	GameSession.set_speed(speed)
+	session.set_speed(speed)
 
 func _show_notice(message: String, level: String) -> void:
 	notice_label.text = message
@@ -238,9 +303,19 @@ func _hide_notice() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("save_game"):
-		GameSession.save_game()
+		session.save_game()
 		get_viewport().set_input_as_handled()
 	elif event.is_action_pressed("toggle_fullscreen"):
 		var mode := DisplayServer.window_get_mode()
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if mode == DisplayServer.WINDOW_MODE_FULLSCREEN else DisplayServer.WINDOW_MODE_FULLSCREEN)
 		get_viewport().set_input_as_handled()
+
+func _exit_tree() -> void:
+	if not is_instance_valid(session):
+		return
+	if session.state_changed.is_connected(_on_state_changed):
+		session.state_changed.disconnect(_on_state_changed)
+	if session.notice_posted.is_connected(_show_notice):
+		session.notice_posted.disconnect(_show_notice)
+	if session.battle_ended.is_connected(_on_battle_ended):
+		session.battle_ended.disconnect(_on_battle_ended)

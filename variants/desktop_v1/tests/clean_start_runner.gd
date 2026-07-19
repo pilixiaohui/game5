@@ -8,9 +8,21 @@ func _initialize() -> void:
 	call_deferred("_run")
 
 func _run() -> void:
-	var session: Node = root.get_node("GameSession")
+	var session := root.get_node_or_null("GameSession")
+	if session == null or not session.has_method("new_game"):
+		_fail_fast("GameSession autoload or new_game method is missing")
+		return
 	session.set_process(false)
-	var main: Control = load("res://scenes/main.tscn").instantiate()
+	var main_scene := load("res://scenes/main.tscn") as PackedScene
+	if main_scene == null:
+		_fail_fast("main scene or one of its required scripts failed to load")
+		return
+	var main := main_scene.instantiate() as Control
+	if main == null or not main.has_method("_show_game"):
+		if main != null:
+			main.queue_free()
+		_fail_fast("main scene is not a Control with the required _show_game method")
+		return
 	root.add_child(main)
 	await _settle()
 	_assert_brand_marks(main, 1, "title")
@@ -36,6 +48,9 @@ func _assert_brand_marks(node: Node, expected: int, context: String) -> void:
 	_assert_equal(marks.size(), expected, "%s must expose the expected brand mark count" % context)
 	for mark in marks:
 		var texture_rect := mark as TextureRect
+		if texture_rect == null:
+			failures.append("%s brand mark must be a TextureRect" % context)
+			continue
 		_assert_true(texture_rect.texture != null, "%s brand texture must load without imported cache" % context)
 		if texture_rect.texture != null:
 			var image := texture_rect.texture.get_image()
@@ -50,6 +65,11 @@ func _collect_marks(node: Node, result: Array[Node]) -> void:
 func _settle() -> void:
 	for index in range(4):
 		await process_frame
+
+func _fail_fast(message: String) -> void:
+	push_error("CLEAN_START_FAILED %s" % message)
+	print("CLEAN_START_FAILED assertions=%d failures=1" % assertions)
+	quit(1)
 
 func _assert_true(value: bool, message: String) -> void:
 	assertions += 1

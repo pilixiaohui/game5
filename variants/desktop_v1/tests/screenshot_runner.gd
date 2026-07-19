@@ -1,15 +1,22 @@
 extends SceneTree
 
+const CAPTURE_CHILD_ARG := "--capture-child"
+
 var session: Node
 var main: Control
 var capture_failures: Array[String] = []
 
 func _initialize() -> void:
+	if CAPTURE_CHILD_ARG not in OS.get_cmdline_user_args():
+		push_error("SCREENSHOTS_REFUSED use ./scripts/verify_screenshots.sh")
+		quit(2)
+		return
 	root.size = Vector2i(1600, 900)
-	call_deferred("_run")
+	call_deferred("_run_capture_child")
 
-func _run() -> void:
+func _run_capture_child() -> void:
 	session = root.get_node("GameSession")
+	session.set_process(false)
 	session.new_game(2707)
 	session.state.resources.biomass = 900.0
 	session.build_room(0, "thermal_metabolism")
@@ -27,8 +34,8 @@ func _run() -> void:
 	await _capture("res://screenshots/hive_1600x900.png", Vector2i(1600, 900))
 	var shell := _find_shell(main)
 	if shell == null:
-		push_error("SCREENSHOT_FAILED game shell not found")
-		quit(1)
+		capture_failures.append("game shell not found")
+		_finish_failed()
 		return
 	shell.call("_show_page", "map")
 	await _settle()
@@ -48,10 +55,7 @@ func _run() -> void:
 		print("SCREENSHOTS_OK count=6 desktop_sizes=1600x900,1280x720")
 		quit(0)
 	else:
-		for failure in capture_failures:
-			push_error(failure)
-		print("SCREENSHOTS_FAILED count=%d" % capture_failures.size())
-		quit(1)
+		_finish_failed()
 
 func _find_shell(node: Node) -> Node:
 	if node.has_method("_show_page") and node.has_method("_update_battle_strip"):
@@ -65,6 +69,7 @@ func _find_shell(node: Node) -> Node:
 func _settle() -> void:
 	for index in range(4):
 		await process_frame
+	await RenderingServer.frame_post_draw
 
 func _capture(path: String, expected_size: Vector2i) -> void:
 	var texture := root.get_texture()
@@ -90,3 +95,9 @@ func _capture(path: String, expected_size: Vector2i) -> void:
 		capture_failures.append("failed to save %s: error=%s" % [path, error])
 		return
 	print("SCREENSHOT_OK path=%s sampled_colors=%d" % [path, sampled_colors.size()])
+
+func _finish_failed() -> void:
+	for failure in capture_failures:
+		push_error("SCREENSHOT_FAILED %s" % failure)
+	print("SCREENSHOTS_FAILED count=%d" % capture_failures.size())
+	quit(1)

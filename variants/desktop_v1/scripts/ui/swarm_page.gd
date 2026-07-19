@@ -1,6 +1,7 @@
 extends VBoxContainer
 
 const UI = preload("res://scripts/ui/ui_utils.gd")
+const ArtAssets = preload("res://scripts/ui/art_assets.gd")
 
 var snapshot: Dictionary = {}
 var content: VBoxContainer
@@ -13,7 +14,7 @@ func _ready() -> void:
 	add_child(UI.label("这里是数量、构成、唯一位置与生产贡献查询，不提供阵型、驻军或目标权重。", "Muted"))
 	content = VBoxContainer.new()
 	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	content.add_theme_constant_override("separation", 14)
+	content.add_theme_constant_override("separation", 8)
 	add_child(content)
 
 func set_snapshot(value: Dictionary) -> void:
@@ -29,10 +30,10 @@ func _rebuild() -> void:
 	metrics.add_theme_constant_override("h_separation", 10)
 	metrics.add_theme_constant_override("v_separation", 10)
 	content.add_child(metrics)
-	_add_metric(metrics, "采质工蜂", int(snapshot.units.worker), "虫巢与领地物流")
-	_add_metric(metrics, "噬咬体", _total_biter(), "猎杀 / 结构保底")
-	_add_metric(metrics, "根脉形态", _total_roots(), "孢体 + 固定菌毯")
-	_add_metric(metrics, "累计形成", int(snapshot.units.formed), "损失 %d" % snapshot.units.lost)
+	_add_metric(metrics, "采质工蜂", int(snapshot.units.worker), "虫巢与领地物流", ArtAssets.SWARM_WORKER)
+	_add_metric(metrics, "噬咬体", _total_biter(), "猎杀 / 结构保底", ArtAssets.SWARM_BITER)
+	_add_metric(metrics, "根脉形态", _total_roots(), "孢体 + 固定菌毯", ArtAssets.SWARM_ROOT_SPORE)
+	_add_metric(metrics, "累计形成", int(snapshot.units.formed), "损失 %d" % snapshot.units.lost, ArtAssets.STATE_RESOURCE)
 	content.add_child(UI.separator())
 	var columns := HBoxContainer.new()
 	columns.add_theme_constant_override("separation", 24)
@@ -63,13 +64,20 @@ func _rebuild() -> void:
 	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	content.add_child(note)
 
-func _add_metric(parent: GridContainer, name: String, value: int, subtitle: String) -> void:
+func _add_metric(parent: GridContainer, name: String, value: int, subtitle: String, icon: Texture2D) -> void:
 	var panel := PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var box := VBoxContainer.new()
 	panel.add_child(box)
-	box.add_child(UI.label(name, "Muted"))
-	box.add_child(UI.label(_format_count(value), "Title"))
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 8)
+	header.add_child(UI.texture_rect(icon, Vector2(48, 48)))
+	var identity := VBoxContainer.new()
+	identity.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	identity.add_child(UI.label(name, "Muted"))
+	identity.add_child(UI.label(_format_count(value), "Title"))
+	header.add_child(identity)
+	box.add_child(header)
 	box.add_child(UI.label(subtitle, "Muted"))
 	parent.add_child(panel)
 

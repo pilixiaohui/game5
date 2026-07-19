@@ -27,7 +27,7 @@ static func build() -> Theme:
 	theme.set_color("font_hover_color", "Button", Color.WHITE)
 	theme.set_color("font_pressed_color", "Button", BG)
 	theme.set_color("font_disabled_color", "Button", Color(MUTED, 0.52))
-	theme.set_font_size("font_size", "Button", 15)
+	theme.set_font_size("font_size", "Button", 16)
 	theme.set_stylebox("normal", "Button", _box(SURFACE_ALT, BORDER, 1, 6, 10))
 	theme.set_stylebox("hover", "Button", _box(Color("193137"), CYAN, 1, 6, 10))
 	theme.set_stylebox("pressed", "Button", _box(GREEN, GREEN, 1, 6, 10))
@@ -59,6 +59,9 @@ static func build() -> Theme:
 	_add_variation(theme, "Muted", "Label", 14, MUTED)
 	_add_variation(theme, "Metric", "Label", 20, TEXT)
 	_add_variation(theme, "Warning", "Label", 14, AMBER)
+	for variation in ["GameTitle", "PageTitle", "Section"]:
+		theme.set_color("font_outline_color", variation, Color(BG, 0.92))
+		theme.set_constant("outline_size", variation, 4 if variation != "GameTitle" else 6)
 	_add_button_variation(theme, "PrimaryButton", GREEN, BG)
 	_add_button_variation(theme, "DangerButton", RED, Color.WHITE)
 	_add_button_variation(theme, "NavButton", SURFACE, TEXT)

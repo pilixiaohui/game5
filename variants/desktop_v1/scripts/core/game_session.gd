@@ -2,6 +2,7 @@ extends Node
 
 signal state_changed(snapshot: Dictionary)
 signal notice_posted(message: String, level: String)
+signal persistence_recovery_changed(status: Dictionary)
 signal battle_started(node_id: String)
 signal battle_ended(node_id: String, captured: bool)
 
@@ -20,10 +21,16 @@ const SNAPSHOT_CORRUPT := "corrupt"
 const SNAPSHOT_IO_ERROR := "io_error"
 const PATH_EXISTS := "exists"
 
+const COMMIT_NOT_COMMITTED := "not_committed"
+const COMMIT_COMMITTED := "committed"
+const COMMIT_UNCERTAIN := "uncertain"
+
 const IO_HAS_SAVE_PRIMARY := "has_save_primary"
 const IO_HAS_SAVE_BACKUP := "has_save_backup"
+const IO_HAS_SAVE_ROLLBACK := "has_save_rollback"
 const IO_LOAD_PRIMARY := "load_primary"
 const IO_LOAD_BACKUP := "load_backup"
+const IO_LOAD_ROLLBACK := "load_rollback"
 const IO_CREATE_SAVE_DIRECTORY := "create_save_directory"
 const IO_REMOVE_STALE_SAVE_TEMP := "remove_stale_save_temp"
 const IO_WRITE_STAGED_SNAPSHOT := "write_staged_snapshot"
@@ -38,7 +45,7 @@ const IO_INSPECT_EXISTING_BACKUP := "inspect_existing_backup"
 const IO_REMOVE_STALE_BACKUP_PREVIOUS := "remove_stale_backup_previous"
 const IO_COPY_EXISTING_BACKUP_TO_PREVIOUS := "copy_existing_backup_to_previous"
 const IO_VALIDATE_PREVIOUS_BACKUP := "validate_previous_backup"
-const IO_REMOVE_EXISTING_BACKUP := "remove_existing_backup"
+const IO_INSPECT_BACKUP_COMMIT_DESTINATION := "inspect_backup_commit_destination"
 const IO_COMMIT_BACKUP := "commit_backup"
 const IO_RESTORE_PREVIOUS_BACKUP_CLEANUP := "restore_previous_backup_cleanup"
 const IO_RESTORE_PREVIOUS_BACKUP_COPY := "restore_previous_backup_copy"
@@ -47,22 +54,20 @@ const IO_RESTORE_PREVIOUS_BACKUP_DESTINATION := "restore_previous_backup_destina
 const IO_RESTORE_PREVIOUS_BACKUP_COMMIT := "restore_previous_backup_commit"
 const IO_VALIDATE_COMMITTED_BACKUP := "validate_committed_backup"
 const IO_REMOVE_STALE_ROLLBACK := "remove_stale_rollback"
-const IO_COPY_PRIMARY_TO_ROLLBACK := "copy_primary_to_rollback"
+const IO_MOVE_PRIMARY_TO_ROLLBACK := "move_primary_to_rollback"
 const IO_VALIDATE_ROLLBACK := "validate_rollback"
-const IO_REMOVE_PRIMARY_FOR_COMMIT := "remove_primary_for_commit"
+const IO_INSPECT_VACATED_PRIMARY_DESTINATION := "inspect_vacated_primary_destination"
 const IO_COMMIT_PRIMARY := "commit_primary"
-const IO_RESTORE_PRIMARY_FROM_ROLLBACK_CLEANUP := "restore_primary_from_rollback_cleanup"
-const IO_RESTORE_PRIMARY_FROM_ROLLBACK_COPY := "restore_primary_from_rollback_copy"
-const IO_VALIDATE_RESTORE_PRIMARY_FROM_ROLLBACK := "validate_restore_primary_from_rollback"
-const IO_RESTORE_PRIMARY_FROM_ROLLBACK_DESTINATION := "restore_primary_from_rollback_destination"
-const IO_RESTORE_PRIMARY_FROM_ROLLBACK_COMMIT := "restore_primary_from_rollback_commit"
+const IO_VALIDATE_ROLLBACK_RESTORE_SOURCE := "validate_rollback_restore_source"
+const IO_RESTORE_PRIMARY_ROLLBACK_ENTRY := "restore_primary_rollback_entry"
+const IO_VALIDATE_RESTORED_PRIMARY_ROLLBACK := "validate_restored_primary_rollback"
 const IO_VALIDATE_COMMITTED_PRIMARY := "validate_committed_primary"
-const IO_REMOVE_INVALID_COMMITTED_PRIMARY := "remove_invalid_committed_primary"
-const IO_RESTORE_INVALID_PRIMARY_FROM_ROLLBACK_CLEANUP := "restore_invalid_primary_from_rollback_cleanup"
-const IO_RESTORE_INVALID_PRIMARY_FROM_ROLLBACK_COPY := "restore_invalid_primary_from_rollback_copy"
-const IO_VALIDATE_RESTORE_INVALID_PRIMARY := "validate_restore_invalid_primary"
-const IO_RESTORE_INVALID_PRIMARY_DESTINATION := "restore_invalid_primary_destination"
-const IO_RESTORE_INVALID_PRIMARY_COMMIT := "restore_invalid_primary_commit"
+const IO_REMOVE_INVALID_COMMITTED_SLOT := "remove_invalid_committed_slot"
+const IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_CLEANUP := "restore_invalid_primary_from_backup_cleanup"
+const IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_COPY := "restore_invalid_primary_from_backup_copy"
+const IO_VALIDATE_RESTORE_INVALID_PRIMARY_FROM_BACKUP := "validate_restore_invalid_primary_from_backup"
+const IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_DESTINATION := "restore_invalid_primary_from_backup_destination"
+const IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_COMMIT := "restore_invalid_primary_from_backup_commit"
 const IO_CLEANUP_ROLLBACK := "cleanup_rollback"
 const IO_CLEANUP_BACKUP_PREVIOUS := "cleanup_backup_previous"
 const IO_REMOVE_STALE_RECOVERY := "remove_stale_recovery"
@@ -76,8 +81,10 @@ const IO_VALIDATE_RESTORED_PRIMARY := "validate_restored_primary"
 const PERSISTENCE_IO_CALLSITES: Array[String] = [
 	IO_HAS_SAVE_PRIMARY,
 	IO_HAS_SAVE_BACKUP,
+	IO_HAS_SAVE_ROLLBACK,
 	IO_LOAD_PRIMARY,
 	IO_LOAD_BACKUP,
+	IO_LOAD_ROLLBACK,
 	IO_CREATE_SAVE_DIRECTORY,
 	IO_REMOVE_STALE_SAVE_TEMP,
 	IO_WRITE_STAGED_SNAPSHOT,
@@ -92,7 +99,7 @@ const PERSISTENCE_IO_CALLSITES: Array[String] = [
 	IO_REMOVE_STALE_BACKUP_PREVIOUS,
 	IO_COPY_EXISTING_BACKUP_TO_PREVIOUS,
 	IO_VALIDATE_PREVIOUS_BACKUP,
-	IO_REMOVE_EXISTING_BACKUP,
+	IO_INSPECT_BACKUP_COMMIT_DESTINATION,
 	IO_COMMIT_BACKUP,
 	IO_RESTORE_PREVIOUS_BACKUP_CLEANUP,
 	IO_RESTORE_PREVIOUS_BACKUP_COPY,
@@ -101,22 +108,20 @@ const PERSISTENCE_IO_CALLSITES: Array[String] = [
 	IO_RESTORE_PREVIOUS_BACKUP_COMMIT,
 	IO_VALIDATE_COMMITTED_BACKUP,
 	IO_REMOVE_STALE_ROLLBACK,
-	IO_COPY_PRIMARY_TO_ROLLBACK,
+	IO_MOVE_PRIMARY_TO_ROLLBACK,
 	IO_VALIDATE_ROLLBACK,
-	IO_REMOVE_PRIMARY_FOR_COMMIT,
+	IO_INSPECT_VACATED_PRIMARY_DESTINATION,
 	IO_COMMIT_PRIMARY,
-	IO_RESTORE_PRIMARY_FROM_ROLLBACK_CLEANUP,
-	IO_RESTORE_PRIMARY_FROM_ROLLBACK_COPY,
-	IO_VALIDATE_RESTORE_PRIMARY_FROM_ROLLBACK,
-	IO_RESTORE_PRIMARY_FROM_ROLLBACK_DESTINATION,
-	IO_RESTORE_PRIMARY_FROM_ROLLBACK_COMMIT,
+	IO_VALIDATE_ROLLBACK_RESTORE_SOURCE,
+	IO_RESTORE_PRIMARY_ROLLBACK_ENTRY,
+	IO_VALIDATE_RESTORED_PRIMARY_ROLLBACK,
 	IO_VALIDATE_COMMITTED_PRIMARY,
-	IO_REMOVE_INVALID_COMMITTED_PRIMARY,
-	IO_RESTORE_INVALID_PRIMARY_FROM_ROLLBACK_CLEANUP,
-	IO_RESTORE_INVALID_PRIMARY_FROM_ROLLBACK_COPY,
-	IO_VALIDATE_RESTORE_INVALID_PRIMARY,
-	IO_RESTORE_INVALID_PRIMARY_DESTINATION,
-	IO_RESTORE_INVALID_PRIMARY_COMMIT,
+	IO_REMOVE_INVALID_COMMITTED_SLOT,
+	IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_CLEANUP,
+	IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_COPY,
+	IO_VALIDATE_RESTORE_INVALID_PRIMARY_FROM_BACKUP,
+	IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_DESTINATION,
+	IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_COMMIT,
 	IO_CLEANUP_ROLLBACK,
 	IO_CLEANUP_BACKUP_PREVIOUS,
 	IO_REMOVE_STALE_RECOVERY,
@@ -142,6 +147,8 @@ const UNIT_DEFS := {
 	"biter": {"name": "噬咬体", "cost": 6, "seconds": 4},
 	"root_spore": {"name": "根脉孢体", "cost": 8, "seconds": 6},
 }
+
+const BATTLE_ASSAULT_INTERVAL_TICKS := 2
 
 const CANDIDATES := [
 	{"id": "acid_jaws", "name": "酸蚀颚列", "summary": "噬咬体伤害 +35%", "pressure": "能源负载 +1", "cost": 7, "accent": "#dc785f"},
@@ -244,13 +251,16 @@ var state: Dictionary = {}
 var _accumulator := 0.0
 var _autosave_elapsed := 0.0
 var _persistence_blocked := false
+var _reload_required := false
 var _last_load_error := ""
+var _last_commit_outcome := COMMIT_NOT_COMMITTED
+var _decision_pauses := {}
 
 func _ready() -> void:
 	set_process(true)
 
 func _process(delta: float) -> void:
-	if _persistence_blocked or state.is_empty() or not state.get("running", false) or state.get("paused", false):
+	if _persistence_blocked or not _decision_pauses.is_empty() or state.is_empty() or not state.get("running", false) or state.get("paused", false):
 		return
 	_accumulator += delta * float(state.get("speed", 1))
 	_autosave_elapsed += delta
@@ -264,8 +274,13 @@ func _process(delta: float) -> void:
 		save_game()
 
 func new_game(seed_value: int = 0) -> void:
+	if _reject_if_persistence_blocked():
+		return
 	_persistence_blocked = false
+	_reload_required = false
 	_last_load_error = ""
+	_last_commit_outcome = COMMIT_NOT_COMMITTED
+	_decision_pauses.clear()
 	_accumulator = 0.0
 	_autosave_elapsed = 0.0
 	var actual_seed := seed_value if seed_value != 0 else int(Time.get_unix_time_from_system())
@@ -300,6 +315,7 @@ func new_game(seed_value: int = 0) -> void:
 	_mark("FH-UX-003")
 	_mark("FH-UX-004")
 	_emit_change()
+	_emit_persistence_recovery_changed()
 
 func _fresh_rooms() -> Array:
 	var rooms: Array = []
@@ -332,6 +348,9 @@ func has_save(path: String = DEFAULT_SAVE_PATH) -> bool:
 	var primary := _fs_path_status(path, IO_HAS_SAVE_PRIMARY)
 	if primary.status != SNAPSHOT_MISSING:
 		return true
+	var rollback := _fs_path_status(path + ROLLBACK_SUFFIX, IO_HAS_SAVE_ROLLBACK)
+	if rollback.status != SNAPSHOT_MISSING:
+		return true
 	var backup := _fs_path_status(path + BACKUP_SUFFIX, IO_HAS_SAVE_BACKUP)
 	return backup.status != SNAPSHOT_MISSING
 
@@ -339,16 +358,32 @@ func snapshot() -> Dictionary:
 	return state.duplicate(true)
 
 func set_speed(value: int) -> void:
+	if _reject_if_persistence_blocked():
+		return
 	if value not in [1, 2, 4]:
 		return
 	state["speed"] = value
 	_emit_change()
 
 func set_paused(value: bool) -> void:
+	if _reject_if_persistence_blocked():
+		return
 	state["paused"] = value
 	_emit_change()
 
+func set_decision_pause(source: String, value: bool) -> void:
+	if source.is_empty():
+		return
+	if value and _reject_if_persistence_blocked():
+		return
+	if value:
+		_decision_pauses[source] = true
+	else:
+		_decision_pauses.erase(source)
+
 func build_room(slot: int, kind: String) -> bool:
+	if _reject_if_persistence_blocked():
+		return false
 	if not ROOM_DEFS.has(kind) or slot < 0 or slot >= state.rooms.size():
 		return _reject("无法识别的房间或槽位。")
 	if state.rooms[slot].kind != "":
@@ -365,6 +400,8 @@ func build_room(slot: int, kind: String) -> bool:
 	return true
 
 func cancel_room(slot: int) -> bool:
+	if _reject_if_persistence_blocked():
+		return false
 	if slot < 0 or slot >= state.rooms.size():
 		return false
 	var room: Dictionary = state.rooms[slot]
@@ -378,6 +415,8 @@ func cancel_room(slot: int) -> bool:
 	return true
 
 func demolish_room(slot: int) -> bool:
+	if _reject_if_persistence_blocked():
+		return false
 	if slot < 0 or slot >= state.rooms.size():
 		return false
 	var room: Dictionary = state.rooms[slot]
@@ -391,6 +430,8 @@ func demolish_room(slot: int) -> bool:
 	return true
 
 func move_room(from_slot: int, to_slot: int) -> bool:
+	if _reject_if_persistence_blocked():
+		return false
 	if from_slot < 0 or to_slot < 0 or from_slot >= state.rooms.size() or to_slot >= state.rooms.size():
 		return false
 	if state.rooms[from_slot].kind in ["", "core"] or state.rooms[to_slot].kind != "":
@@ -405,6 +446,8 @@ func move_room(from_slot: int, to_slot: int) -> bool:
 	return true
 
 func set_room_paused(slot: int, value: bool) -> bool:
+	if _reject_if_persistence_blocked():
+		return false
 	if slot < 0 or slot >= state.rooms.size() or state.rooms[slot].kind in ["", "core"]:
 		return false
 	state.rooms[slot].paused = value
@@ -423,12 +466,16 @@ func is_room_unlocked(kind: String) -> bool:
 	return false
 
 func set_unit_target(kind: String, delta: int) -> void:
+	if _reject_if_persistence_blocked():
+		return
 	if not state.targets.has(kind):
 		return
 	state.targets[kind] = max(0, int(state.targets[kind]) + delta)
 	_emit_change()
 
 func attack_node(node_id: String) -> bool:
+	if _reject_if_persistence_blocked():
+		return false
 	if not state.active_battle.is_empty():
 		return _reject("当前已有一个主动战场。")
 	var node := _node(node_id)
@@ -465,25 +512,56 @@ func attack_node(node_id: String) -> bool:
 	return true
 
 func retreat() -> bool:
+	if _reject_if_persistence_blocked():
+		return false
 	if state.active_battle.is_empty():
 		return _reject("没有可以撤离的主动战场。")
-	var battle: Dictionary = state.active_battle
-	var node := _node(battle.node_id)
-	state.units.biter += int(battle.biter)
-	state.units.root_spore += int(battle.spore)
-	state.units.root_mat += int(battle.roots)
-	node.enemy = min(int(node.enemy_max), int(battle.enemy) + max(1, int(ceil(float(node.enemy_max) * 0.15))))
-	node.structure_hp = int(battle.structure_hp)
-	state.stats.retreats += 1
-	_mark("FH-007")
-	_record("battle_retreated", "撤离原子提交：可机动单位已回归，固定菌毯留置，敌军开始有源恢复。", {"node_id": node.id})
-	state.active_battle = {}
-	battle_ended.emit(node.id, false)
-	save_game()
+	var node_id := String(state.active_battle.node_id)
+	var candidate := _build_retreat_candidate()
+	var normalized := _normalize_state(candidate)
+	if not normalized.ok:
+		return _reject("撤离候选状态校验失败：%s；当前战场和存档保持不变。" % normalized.error)
+	var commit := _commit_snapshot(DEFAULT_SAVE_PATH, normalized.state)
+	if commit.outcome == COMMIT_UNCERTAIN:
+		return _fail_persistence("撤离存档已越过提交点，但结果无法确认：%s 当前内存未安装候选；请重新载入决定权威状态。" % commit.error, true)
+	if commit.outcome != COMMIT_COMMITTED:
+		return _reject("撤离持久化失败：%s 当前战场和存档保持不变，可重试。" % commit.error)
+	state = normalized.state
+	notice_posted.emit("撤离原子提交：可机动单位已回归，固定菌毯留置，敌军开始有源恢复。", "info")
+	battle_ended.emit(node_id, false)
 	_emit_change()
 	return true
 
+func _build_retreat_candidate() -> Dictionary:
+	var candidate := state.duplicate(true)
+	var battle: Dictionary = candidate.active_battle
+	var node: Dictionary = {}
+	for candidate_node in candidate.nodes:
+		if String(candidate_node.id) == String(battle.node_id):
+			node = candidate_node
+			break
+	candidate.units.biter += int(battle.biter)
+	candidate.units.root_spore += int(battle.spore)
+	candidate.units.root_mat += int(battle.roots)
+	node.enemy = min(int(node.enemy_max), int(battle.enemy) + max(1, int(ceil(float(node.enemy_max) * 0.15))))
+	node.structure_hp = int(battle.structure_hp)
+	candidate.stats.retreats += 1
+	if not candidate.milestones.has("FH-007"):
+		candidate.milestones["FH-007"] = int(candidate.tick)
+	candidate.ledger.push_front({
+		"tick": int(candidate.tick),
+		"type": "battle_retreated",
+		"message": "撤离原子提交：可机动单位已回归，固定菌毯留置，敌军开始有源恢复。",
+		"details": {"node_id": node.id},
+	})
+	if candidate.ledger.size() > 80:
+		candidate.ledger.resize(80)
+	candidate.active_battle = {}
+	return candidate
+
 func induce_candidate() -> bool:
+	if _reject_if_persistence_blocked():
+		return false
 	if not state.unlocks.active_induction:
 		return _reject("主动诱导尚未解锁。")
 	if not state.candidate_group.is_empty():
@@ -496,6 +574,8 @@ func induce_candidate() -> bool:
 	return true
 
 func culture_candidate() -> bool:
+	if _reject_if_persistence_blocked():
+		return false
 	if not state.unlocks.mutation_culture or not _has_complete_room("mutation_culture"):
 		return _reject("需要运行中的诱变培养腔。")
 	if not state.candidate_group.is_empty():
@@ -508,6 +588,8 @@ func culture_candidate() -> bool:
 	return true
 
 func select_candidate(candidate_id: String) -> bool:
+	if _reject_if_persistence_blocked():
+		return false
 	if state.candidate_group.is_empty():
 		return _reject("当前没有候选组。")
 	var selected: Dictionary = {}
@@ -703,7 +785,8 @@ func _update_battle() -> void:
 		attack_power *= 1.35
 	if _has_mutation("root_resonance"):
 		attack_power += float(battle.roots) * 0.5
-	var enemy_kills: int = mini(int(battle.enemy), maxi(1, int(floor(attack_power / 8.0)))) if attack_power > 0 else 0
+	var assault_boundary: bool = int(battle.elapsed) == 1 or int(battle.elapsed) % BATTLE_ASSAULT_INTERVAL_TICKS == 0
+	var enemy_kills: int = mini(int(battle.enemy), maxi(1, int(floor(attack_power / 8.0)))) if attack_power > 0 and assault_boundary else 0
 	battle.enemy -= enemy_kills
 	battle.kills += enemy_kills
 	state.stats.enemies_defeated += enemy_kills
@@ -713,7 +796,7 @@ func _update_battle() -> void:
 		battle.biter -= losses
 		battle.losses += losses
 		state.units.lost += losses
-	if battle.enemy <= 0 and battle.structure_hp > 0:
+	if assault_boundary and battle.enemy <= 0 and battle.structure_hp > 0:
 		battle.structure_hp = max(0, int(battle.structure_hp) - max(1, int(floor(attack_power / 10.0))))
 	if battle.biter + battle.spore + battle.roots <= 0:
 		var failed_node := _node(battle.node_id)
@@ -808,79 +891,164 @@ func save_game(path: String = DEFAULT_SAVE_PATH) -> bool:
 	if state.is_empty():
 		return false
 	if _persistence_blocked:
-		return _reject("存档未通过校验，模拟与保存已停止；原槽和备份保持不变。")
+		return _reject("存档提交结果待确认，模拟、操作与保存已冻结；请重新载入。")
 	var normalized := _normalize_state(state)
 	if not normalized.ok:
 		return _fail_persistence("当前状态校验失败：%s；未写入存档。" % normalized.error)
 	var commit := _commit_snapshot(path, normalized.state)
-	if not commit.ok:
+	if commit.outcome == COMMIT_UNCERTAIN:
+		return _fail_persistence("存档提交结果无法确认：%s 模拟、操作与保存已冻结；请重新载入。" % commit.error, true)
+	if commit.outcome != COMMIT_COMMITTED:
 		return _reject(commit.error)
 	state = normalized.state
-	notice_posted.emit("已保存至本地存档槽", "success")
+	notice_posted.emit(commit.get("warning", "已保存至本地存档槽"), "warning" if commit.has("warning") else "success")
 	return true
 
 func load_game(path: String = DEFAULT_SAVE_PATH) -> bool:
-	var primary := _read_snapshot(path, IO_LOAD_PRIMARY)
-	var recovered := false
-	if primary.status == SNAPSHOT_IO_ERROR:
-		return _fail_persistence("主槽读取发生 I/O 错误（%s）；未读取备份，所有文件保持不变。" % primary.error)
+	var reconciliation := _reconcile_interrupted_transaction(path)
+	if not reconciliation.ok:
+		return _fail_persistence(reconciliation.error, bool(reconciliation.get("requires_reload", true)))
+	var primary: Dictionary = reconciliation.primary
+	var recovered: bool = bool(reconciliation.get("recovered", false))
+	var preserve_rollback: bool = bool(reconciliation.get("preserve_rollback", false))
 	if primary.status in [SNAPSHOT_MISSING, SNAPSHOT_CORRUPT]:
 		var backup := _read_snapshot(path + BACKUP_SUFFIX, IO_LOAD_BACKUP)
 		if not backup.ok:
-			return _fail_persistence("主槽不可用（%s），备份也不可用（%s）；所有文件保持不变。" % [primary.error, backup.error])
+			return _fail_persistence("主槽/事务回滚不可用（%s），备份也不可用（%s）；所有候选保持不变。" % [primary.error, backup.error], bool(reconciliation.get("had_transaction", false)))
 		var recovery := _restore_backup(path, primary.status)
 		if not recovery.ok:
-			return _fail_persistence("备份有效但主槽恢复失败：%s；备份保持不变。" % recovery.error)
+			return _fail_persistence("备份有效但主槽恢复失败：%s；备份与事务候选保持不变。" % recovery.error, bool(reconciliation.get("had_transaction", false)))
 		primary = backup
 		recovered = true
 	state = primary.state
 	state.running = true
 	_persistence_blocked = false
+	_reload_required = false
 	_last_load_error = ""
+	_decision_pauses.clear()
 	_accumulator = 0.0
 	_autosave_elapsed = 0.0
+	var preserve_previous := _reconcile_backup_protection(path)
+	var cleanup := _cleanup_transaction_scratch(path, preserve_previous, preserve_rollback)
 	_record("save_recovered" if recovered else "save_loaded", "主槽不可用，已从验证通过的备份恢复。" if recovered else "本地存档已恢复，地图与候选不会重抽。")
+	if not cleanup.ok:
+		notice_posted.emit("存档已重新载入，但事务临时文件清理失败：%s" % cleanup.error, "warning")
 	_emit_change()
+	_emit_persistence_recovery_changed()
 	return true
 
+func _reconcile_interrupted_transaction(path: String, primary_io: String = IO_LOAD_PRIMARY, rollback_io: String = IO_LOAD_ROLLBACK) -> Dictionary:
+	var primary := _read_snapshot(path, primary_io)
+	if primary.status == SNAPSHOT_IO_ERROR:
+		return {"ok": false, "error": "主槽读取发生 I/O 错误（%s）；未检查或删除事务候选。" % primary.error, "requires_reload": true}
+	var rollback := _read_snapshot(path + ROLLBACK_SUFFIX, rollback_io)
+	if primary.ok:
+		return {
+			"ok": true,
+			"primary": primary,
+			"recovered": false,
+			"had_transaction": rollback.status != SNAPSHOT_MISSING,
+			"preserve_rollback": rollback.status == SNAPSHOT_IO_ERROR,
+		}
+	if rollback.status == SNAPSHOT_IO_ERROR:
+		return {"ok": false, "error": "主槽不可用且事务回滚读取发生 I/O 错误（%s）；未读取备份或删除候选。" % rollback.error, "requires_reload": true}
+	if rollback.ok:
+		var restore := _restore_primary_rollback_entry(path, rollback)
+		if restore.ok:
+			return {"ok": true, "primary": restore.snapshot, "recovered": true, "had_transaction": true, "preserve_rollback": false}
+		if restore.renamed and restore.final_status == SNAPSHOT_IO_ERROR:
+			return {"ok": false, "error": "事务回滚已原子恢复到主槽，但最终读取发生 I/O 错误（%s）；保持主槽原样并等待重试。" % restore.error, "requires_reload": true}
+		if restore.final_status not in [SNAPSHOT_MISSING, SNAPSHOT_CORRUPT]:
+			return {"ok": false, "error": "事务回滚恢复无法确认（%s）；未读取备份或删除候选。" % restore.error, "requires_reload": true}
+		primary = _snapshot_result(restore.final_status, restore.error)
+	return {
+		"ok": true,
+		"primary": primary,
+		"recovered": false,
+		"had_transaction": rollback.status != SNAPSHOT_MISSING,
+		"preserve_rollback": false,
+	}
+
+func _reconcile_backup_protection(path: String) -> bool:
+	var previous_path := path + BACKUP_PREVIOUS_SUFFIX
+	var previous := _read_snapshot(previous_path, IO_VALIDATE_PREVIOUS_BACKUP)
+	if previous.status == SNAPSHOT_MISSING:
+		return false
+	if not previous.ok:
+		return true
+	var backup_path := path + BACKUP_SUFFIX
+	var backup := _read_snapshot(backup_path, IO_INSPECT_EXISTING_BACKUP)
+	if backup.ok:
+		return false
+	if backup.status == SNAPSHOT_IO_ERROR:
+		return true
+	var restore_error := _restore_copy(previous_path, backup_path, IO_RESTORE_PREVIOUS_BACKUP_CLEANUP, IO_RESTORE_PREVIOUS_BACKUP_COPY, IO_VALIDATE_RESTORE_PREVIOUS_BACKUP, IO_RESTORE_PREVIOUS_BACKUP_DESTINATION, IO_RESTORE_PREVIOUS_BACKUP_COMMIT)
+	return restore_error != OK
+
 func _commit_snapshot(path: String, snapshot: Dictionary) -> Dictionary:
+	_last_commit_outcome = COMMIT_NOT_COMMITTED
 	var base_dir := path.get_base_dir()
 	if not base_dir.is_empty():
 		var mkdir_error := _fs_make_dir(ProjectSettings.globalize_path(base_dir), IO_CREATE_SAVE_DIRECTORY)
 		if mkdir_error != OK:
 			return _commit_error("无法创建存档目录（%s）。" % mkdir_error)
+	var reconciliation := _reconcile_interrupted_transaction(path, IO_INSPECT_EXISTING_PRIMARY, IO_VALIDATE_ROLLBACK)
+	if not reconciliation.ok:
+		var reconciliation_error := "新事务启动前无法确认主槽/回滚权威状态：%s" % reconciliation.error
+		return _commit_uncertain(reconciliation_error) if bool(reconciliation.get("requires_reload", false)) else _commit_error(reconciliation_error)
+	if bool(reconciliation.get("preserve_rollback", false)):
+		return _commit_error("新事务启动前无法读取遗留回滚；主槽虽有效，但不会清理或覆盖任何事务候选。")
+	var primary: Dictionary = reconciliation.primary
 	var temp_path := path + SAVE_TEMP_SUFFIX
 	var stale_temp_error := _remove_if_exists(temp_path, IO_REMOVE_STALE_SAVE_TEMP)
 	if stale_temp_error != OK:
-		return _commit_error("无法清理旧临时存档（%s）。" % stale_temp_error)
+		return _not_committed_after_cleanup(path, "无法清理旧临时存档（%s）。" % stale_temp_error)
 	var write_error := _write_snapshot_file(temp_path, snapshot, IO_WRITE_STAGED_SNAPSHOT)
 	if write_error != OK:
-		return _commit_error("无法完整写入临时存档（%s）。" % write_error)
+		return _not_committed_after_cleanup(path, "无法完整写入临时存档（%s）。" % write_error)
 	var staged := _read_snapshot(temp_path, IO_VALIDATE_STAGED_SNAPSHOT)
 	if not staged.ok:
-		return _commit_error("临时存档校验失败：%s。" % staged.error)
-	var primary := _read_snapshot(path, IO_INSPECT_EXISTING_PRIMARY)
-	if primary.status == SNAPSHOT_IO_ERROR:
-		return _commit_error("现有主槽读取发生 I/O 错误：%s；拒绝写入。" % primary.error)
+		return _not_committed_after_cleanup(path, "临时存档校验失败：%s。" % staged.error)
 	if primary.status == SNAPSHOT_CORRUPT:
-		return _commit_error("现有主槽损坏，拒绝自动覆盖；请先继续游戏以恢复备份。")
+		return _not_committed_after_cleanup(path, "现有主槽损坏，拒绝自动覆盖；请先继续游戏以恢复备份。")
 	if primary.ok:
-		var backup_commit := _commit_backup(path)
-		if not backup_commit.ok:
-			return backup_commit
+		var backup_preparation := _prepare_backup(path)
+		if not backup_preparation.ok:
+			return _not_committed_after_cleanup(path, backup_preparation.error)
+		var rollback_preparation := _prepare_primary_rollback(path)
+		if not rollback_preparation.ok:
+			if rollback_preparation.get("outcome", COMMIT_NOT_COMMITTED) == COMMIT_UNCERTAIN:
+				return rollback_preparation
+			return _not_committed_after_cleanup(path, rollback_preparation.error)
 		var primary_commit := _commit_primary(path)
-		if not primary_commit.ok:
+		if primary_commit.outcome == COMMIT_UNCERTAIN:
 			return primary_commit
+		if primary_commit.outcome != COMMIT_COMMITTED:
+			return _not_committed_after_cleanup(path, primary_commit.error)
+		var backup_commit := _commit_prepared_backup(path, bool(backup_preparation.had_backup))
+		var committed_cleanup := _cleanup_transaction_scratch(path, bool(backup_commit.get("preserve_previous", false)))
+		var warnings: Array[String] = []
+		if not backup_commit.ok:
+			warnings.append(backup_commit.error)
+		if not committed_cleanup.ok:
+			warnings.append(committed_cleanup.error)
+		return _commit_success("存档主槽已提交，但保护维护需要关注：%s" % " ".join(warnings) if not warnings.is_empty() else "")
 	else:
 		var first_commit_error := _fs_rename(temp_path, path, IO_COMMIT_FIRST_PRIMARY)
 		if first_commit_error != OK:
-			return _commit_error("首次主槽提交失败（%s）。" % first_commit_error)
+			return _not_committed_after_cleanup(path, "首次主槽提交失败（%s）。" % first_commit_error)
 		var first_primary := _read_snapshot(path, IO_VALIDATE_FIRST_PRIMARY)
+		if first_primary.status == SNAPSHOT_IO_ERROR:
+			return _commit_uncertain("首次主槽提交后读取发生 I/O 错误：%s。" % first_primary.error)
 		if not first_primary.ok:
-			return _commit_error("首次主槽提交后校验失败：%s。" % first_primary.error)
-	return {"ok": true, "error": ""}
+			var remove_invalid := _remove_if_exists(path, IO_REMOVE_INVALID_COMMITTED_SLOT)
+			if remove_invalid != OK:
+				return _commit_uncertain("首次主槽提交后损坏且无法移除（%s）。" % remove_invalid)
+			return _not_committed_after_cleanup(path, "首次主槽提交后校验失败，已移除无效主槽。")
+		var first_cleanup := _cleanup_transaction_scratch(path)
+		return _commit_success("首次主槽已提交，但临时文件清理失败：%s" % first_cleanup.error if not first_cleanup.ok else "")
 
-func _commit_backup(path: String) -> Dictionary:
+func _prepare_backup(path: String) -> Dictionary:
 	var backup_path := path + BACKUP_SUFFIX
 	var backup_temp := path + BACKUP_TEMP_SUFFIX
 	var previous_backup := path + BACKUP_PREVIOUS_SUFFIX
@@ -908,65 +1076,82 @@ func _commit_backup(path: String) -> Dictionary:
 		if not previous_check.ok:
 			return _commit_error("已承诺备份保护副本校验失败：%s。" % previous_check.error)
 		preserved_previous = true
-	if existing_backup.status != SNAPSHOT_MISSING:
-		var remove_backup := _fs_remove(backup_path, IO_REMOVE_EXISTING_BACKUP)
-		if remove_backup != OK:
-			return _commit_error("无法开始备份提交（%s）。" % remove_backup)
+	return {"ok": true, "error": "", "had_backup": existing_backup.ok, "preserved_previous": preserved_previous}
+
+func _commit_prepared_backup(path: String, had_backup: bool) -> Dictionary:
+	var backup_path := path + BACKUP_SUFFIX
+	var backup_temp := path + BACKUP_TEMP_SUFFIX
+	var previous_backup := path + BACKUP_PREVIOUS_SUFFIX
+	var destination := _fs_path_status(backup_path, IO_INSPECT_BACKUP_COMMIT_DESTINATION)
+	if destination.status == SNAPSHOT_IO_ERROR:
+		return _commit_error("备份提交点状态无法确认（%s）；主槽已提交。" % destination.error_code)
 	var commit_backup := _fs_rename(backup_temp, backup_path, IO_COMMIT_BACKUP)
 	if commit_backup != OK:
-		if preserved_previous:
-			var restore_backup := _restore_copy(previous_backup, backup_path, IO_RESTORE_PREVIOUS_BACKUP_CLEANUP, IO_RESTORE_PREVIOUS_BACKUP_COPY, IO_VALIDATE_RESTORE_PREVIOUS_BACKUP, IO_RESTORE_PREVIOUS_BACKUP_DESTINATION, IO_RESTORE_PREVIOUS_BACKUP_COMMIT)
-			if restore_backup != OK:
-				return _commit_error("备份提交失败（%s），旧备份恢复也失败（%s）；保护副本仍保留。" % [commit_backup, restore_backup])
-		return _commit_error("备份提交失败（%s），旧备份已恢复。" % commit_backup)
+		return _commit_error("备份提交失败（%s）；原备份未被触碰，主槽已提交。" % commit_backup)
 	var committed_backup := _read_snapshot(backup_path, IO_VALIDATE_COMMITTED_BACKUP)
-	if not committed_backup.ok:
-		return _commit_error("备份提交后校验失败：%s。" % committed_backup.error)
+	if committed_backup.ok:
+		return {"ok": true, "error": ""}
+	if committed_backup.status == SNAPSHOT_IO_ERROR:
+		return {"ok": false, "error": "备份提交后读取结果不确定：%s；旧备份保护副本仍保留，主槽已提交。" % committed_backup.error, "preserve_previous": had_backup}
+	if had_backup:
+		var restore_error := _restore_copy(previous_backup, backup_path, IO_RESTORE_PREVIOUS_BACKUP_CLEANUP, IO_RESTORE_PREVIOUS_BACKUP_COPY, IO_VALIDATE_RESTORE_PREVIOUS_BACKUP, IO_RESTORE_PREVIOUS_BACKUP_DESTINATION, IO_RESTORE_PREVIOUS_BACKUP_COMMIT)
+		if restore_error != OK:
+			return {"ok": false, "error": "备份提交后损坏且旧备份恢复失败（%s）；保护副本仍保留，主槽已提交。" % restore_error, "preserve_previous": true}
+		return _commit_error("备份提交后损坏，已恢复旧备份；主槽已提交。")
+	var remove_invalid := _remove_if_exists(backup_path, IO_REMOVE_INVALID_COMMITTED_SLOT)
+	return _commit_error("首个备份提交后损坏，已移除无效备份；主槽已提交。" if remove_invalid == OK else "首个备份提交后损坏且无法移除（%s）；主槽已提交。" % remove_invalid)
+
+func _prepare_primary_rollback(path: String) -> Dictionary:
+	var rollback_path := path + ROLLBACK_SUFFIX
+	var cleanup_rollback := _remove_if_exists(rollback_path, IO_REMOVE_STALE_ROLLBACK)
+	if cleanup_rollback != OK:
+		return _commit_error("无法清理旧主槽回滚副本（%s）。" % cleanup_rollback)
+	var move_rollback := _fs_rename(path, rollback_path, IO_MOVE_PRIMARY_TO_ROLLBACK)
+	if move_rollback != OK:
+		return _commit_error("无法原子保留旧主槽目录项（%s）。" % move_rollback)
 	return {"ok": true, "error": ""}
 
 func _commit_primary(path: String) -> Dictionary:
 	var temp_path := path + SAVE_TEMP_SUFFIX
-	var rollback_path := path + ROLLBACK_SUFFIX
-	var previous_backup := path + BACKUP_PREVIOUS_SUFFIX
-	var cleanup_rollback := _remove_if_exists(rollback_path, IO_REMOVE_STALE_ROLLBACK)
-	if cleanup_rollback != OK:
-		return _commit_error("无法清理旧主槽回滚副本（%s）。" % cleanup_rollback)
-	var copy_rollback := _fs_copy(path, rollback_path, IO_COPY_PRIMARY_TO_ROLLBACK)
-	if copy_rollback != OK:
-		return _commit_error("无法建立主槽回滚副本（%s）。" % copy_rollback)
-	var rollback_check := _read_snapshot(rollback_path, IO_VALIDATE_ROLLBACK)
-	if not rollback_check.ok:
-		return _commit_error("主槽回滚副本校验失败：%s。" % rollback_check.error)
-	var remove_primary := _fs_remove(path, IO_REMOVE_PRIMARY_FOR_COMMIT)
-	if remove_primary != OK:
-		return _commit_error("无法开始主槽提交（%s）。" % remove_primary)
+	var destination := _fs_path_status(path, IO_INSPECT_VACATED_PRIMARY_DESTINATION)
+	if destination.status != SNAPSHOT_MISSING:
+		var destination_restore := _restore_primary_rollback_entry(path)
+		if destination_restore.ok:
+			return _commit_error("主槽提交点未保持空闲（%s），已恢复旧主槽。" % destination.error_code)
+		return _commit_uncertain("主槽提交点状态异常且旧主槽无法恢复（%s/%s）；必须重新载入。" % [destination.error_code, destination_restore.error])
 	var commit_primary := _fs_rename(temp_path, path, IO_COMMIT_PRIMARY)
 	if commit_primary != OK:
-		var rollback := _restore_copy(rollback_path, path, IO_RESTORE_PRIMARY_FROM_ROLLBACK_CLEANUP, IO_RESTORE_PRIMARY_FROM_ROLLBACK_COPY, IO_VALIDATE_RESTORE_PRIMARY_FROM_ROLLBACK, IO_RESTORE_PRIMARY_FROM_ROLLBACK_DESTINATION, IO_RESTORE_PRIMARY_FROM_ROLLBACK_COMMIT)
-		if rollback != OK:
-			return _commit_error("主槽提交失败（%s），回滚也失败（%s）；验证通过的备份与回滚副本仍保留。" % [commit_primary, rollback])
-		return _commit_error("主槽提交失败（%s），旧主槽已恢复。" % commit_primary)
+		var failed_commit_restore := _restore_primary_rollback_entry(path)
+		if failed_commit_restore.ok:
+			return _commit_error("主槽原子提交失败（%s），已恢复原目录项。" % commit_primary)
+		return _commit_uncertain("主槽提交失败且旧目录项无法恢复（%s/%s）；必须重新载入。" % [commit_primary, failed_commit_restore.error])
 	var committed_primary := _read_snapshot(path, IO_VALIDATE_COMMITTED_PRIMARY)
 	if committed_primary.status == SNAPSHOT_IO_ERROR:
-		return _commit_error("新主槽提交后读取发生 I/O 错误：%s；备份与回滚副本仍保留。" % committed_primary.error)
+		return _commit_uncertain("新主槽提交后读取发生 I/O 错误：%s；结果必须由重新载入决定。" % committed_primary.error)
 	if not committed_primary.ok:
-		var remove_invalid := _remove_if_exists(path, IO_REMOVE_INVALID_COMMITTED_PRIMARY)
-		if remove_invalid != OK:
-			return _commit_error("新主槽校验失败且无法移除（%s）；备份与回滚副本仍保留。" % remove_invalid)
-		var rollback_invalid := _restore_copy(rollback_path, path, IO_RESTORE_INVALID_PRIMARY_FROM_ROLLBACK_CLEANUP, IO_RESTORE_INVALID_PRIMARY_FROM_ROLLBACK_COPY, IO_VALIDATE_RESTORE_INVALID_PRIMARY, IO_RESTORE_INVALID_PRIMARY_DESTINATION, IO_RESTORE_INVALID_PRIMARY_COMMIT)
-		if rollback_invalid != OK:
-			return _commit_error("新主槽校验失败且回滚失败（%s）；备份与回滚副本仍保留。" % rollback_invalid)
-		return _commit_error("新主槽校验失败，旧主槽已恢复。")
-	var cleanup_errors: Array[String] = []
-	var cleanup_rollback_error := _remove_if_exists(rollback_path, IO_CLEANUP_ROLLBACK)
-	if cleanup_rollback_error != OK:
-		cleanup_errors.append("%s=%s" % [IO_CLEANUP_ROLLBACK, cleanup_rollback_error])
-	var cleanup_previous_error := _remove_if_exists(previous_backup, IO_CLEANUP_BACKUP_PREVIOUS)
-	if cleanup_previous_error != OK:
-		cleanup_errors.append("%s=%s" % [IO_CLEANUP_BACKUP_PREVIOUS, cleanup_previous_error])
-	if not cleanup_errors.is_empty():
-		notice_posted.emit("存档已提交，但保护副本清理失败：%s" % ", ".join(cleanup_errors), "warning")
-	return {"ok": true, "error": ""}
+		var rollback := _restore_primary_rollback_entry(path)
+		if rollback.ok:
+			return _commit_error("新主槽校验失败，已原子恢复提交前主槽。")
+		if rollback.final_status == SNAPSHOT_IO_ERROR:
+			return _commit_uncertain("新主槽校验失败；旧主槽恢复停在 %s（renamed=%s）且读取结果不确定：%s。保持所有候选并等待重新载入。" % [rollback.stage, rollback.renamed, rollback.error])
+		var backup_fallback := _restore_copy(path + BACKUP_SUFFIX, path, IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_CLEANUP, IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_COPY, IO_VALIDATE_RESTORE_INVALID_PRIMARY_FROM_BACKUP, IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_DESTINATION, IO_RESTORE_INVALID_PRIMARY_FROM_BACKUP_COMMIT)
+		if backup_fallback == OK:
+			return _commit_uncertain("新主槽校验失败；原目录项恢复无法确认（%s），已恢复可加载备份，但权威状态仍须重新载入。" % rollback.error)
+		return _commit_uncertain("新主槽损坏，主槽回滚与备份恢复均失败（%s/%s）；必须重新载入。" % [rollback.error, backup_fallback])
+	return _commit_success()
+
+func _restore_primary_rollback_entry(path: String, validated_source: Dictionary = {}) -> Dictionary:
+	var rollback_path := path + ROLLBACK_SUFFIX
+	var source_snapshot := validated_source if not validated_source.is_empty() else _read_snapshot(rollback_path, IO_VALIDATE_ROLLBACK_RESTORE_SOURCE)
+	if not source_snapshot.ok:
+		return {"ok": false, "renamed": false, "stage": "source_validation", "final_status": source_snapshot.status, "snapshot": {}, "error": "旧主槽回滚目录项不可验证：%s。" % source_snapshot.error}
+	var restore := _fs_rename(rollback_path, path, IO_RESTORE_PRIMARY_ROLLBACK_ENTRY)
+	if restore != OK:
+		return {"ok": false, "renamed": false, "stage": "rename", "final_status": SNAPSHOT_IO_ERROR, "snapshot": {}, "error": "旧主槽目录项原子恢复失败（%s）。" % restore}
+	var restored := _read_snapshot(path, IO_VALIDATE_RESTORED_PRIMARY_ROLLBACK)
+	if not restored.ok:
+		return {"ok": false, "renamed": true, "stage": "final_validation", "final_status": restored.status, "snapshot": {}, "error": "原子恢复后的旧主槽无法验证：%s。" % restored.error}
+	return {"ok": true, "renamed": true, "stage": "final_validation", "final_status": SNAPSHOT_OK, "snapshot": restored, "error": ""}
 
 func _restore_backup(path: String, primary_status: String) -> Dictionary:
 	var backup_path := path + BACKUP_SUFFIX
@@ -1006,8 +1191,6 @@ func _restore_copy(source: String, destination: String, cleanup_io: String, copy
 	var destination_status := _fs_path_status(destination, destination_io)
 	if destination_status.status == SNAPSHOT_IO_ERROR:
 		return int(destination_status.error_code)
-	if destination_status.status == PATH_EXISTS:
-		return ERR_ALREADY_IN_USE
 	return _fs_rename(recovery_path, destination, commit_io)
 
 func _read_snapshot(path: String, callsite: String) -> Dictionary:
@@ -1054,7 +1237,41 @@ func _remove_if_exists(path: String, callsite: String) -> Error:
 	return _fs_remove(path, callsite)
 
 func _commit_error(message: String) -> Dictionary:
-	return {"ok": false, "error": message}
+	_last_commit_outcome = COMMIT_NOT_COMMITTED
+	return {"ok": false, "outcome": COMMIT_NOT_COMMITTED, "error": message}
+
+func _commit_uncertain(message: String) -> Dictionary:
+	_last_commit_outcome = COMMIT_UNCERTAIN
+	return {"ok": false, "outcome": COMMIT_UNCERTAIN, "error": message}
+
+func _commit_success(warning: String = "") -> Dictionary:
+	_last_commit_outcome = COMMIT_COMMITTED
+	var result := {"ok": true, "outcome": COMMIT_COMMITTED, "error": ""}
+	if not warning.is_empty():
+		result["warning"] = warning
+	return result
+
+func _not_committed_after_cleanup(path: String, message: String) -> Dictionary:
+	var cleanup := _cleanup_transaction_scratch(path)
+	if not cleanup.ok:
+		return _commit_uncertain("%s 事务未到提交点，但临时文件清理失败：%s" % [message, cleanup.error])
+	return _commit_error(message)
+
+func _cleanup_transaction_scratch(path: String, preserve_previous: bool = false, preserve_rollback: bool = false) -> Dictionary:
+	var cleanup_steps := [
+		[path + SAVE_TEMP_SUFFIX, IO_REMOVE_STALE_SAVE_TEMP],
+		[path + BACKUP_TEMP_SUFFIX, IO_REMOVE_STALE_BACKUP_TEMP],
+	]
+	if not preserve_rollback:
+		cleanup_steps.append([path + ROLLBACK_SUFFIX, IO_CLEANUP_ROLLBACK])
+	if not preserve_previous:
+		cleanup_steps.append([path + BACKUP_PREVIOUS_SUFFIX, IO_CLEANUP_BACKUP_PREVIOUS])
+	var errors: Array[String] = []
+	for step in cleanup_steps:
+		var cleanup_error := _remove_if_exists(String(step[0]), String(step[1]))
+		if cleanup_error != OK:
+			errors.append("%s=%s" % [step[1], cleanup_error])
+	return {"ok": errors.is_empty(), "error": ", ".join(errors)}
 
 func _fs_make_dir(path: String, callsite: String) -> Error:
 	if not _is_persistence_io_callsite(callsite):
@@ -1125,16 +1342,41 @@ func _is_persistence_io_callsite(callsite: String) -> bool:
 func is_persistence_blocked() -> bool:
 	return _persistence_blocked
 
+func is_reload_required() -> bool:
+	return _reload_required
+
+func last_commit_outcome() -> String:
+	return _last_commit_outcome
+
 func last_load_error() -> String:
 	return _last_load_error
 
-func _fail_persistence(message: String) -> bool:
+func persistence_recovery_status() -> Dictionary:
+	return {
+		"blocked": _persistence_blocked,
+		"reload_required": _reload_required,
+		"message": _last_load_error,
+		"commit_outcome": _last_commit_outcome,
+	}
+
+func _emit_persistence_recovery_changed() -> void:
+	persistence_recovery_changed.emit(persistence_recovery_status())
+
+func _fail_persistence(message: String, requires_reload: bool = false) -> bool:
 	_persistence_blocked = true
+	_reload_required = _reload_required or requires_reload
 	_last_load_error = message
 	_accumulator = 0.0
 	_autosave_elapsed = 0.0
 	notice_posted.emit(message, "warning")
+	_emit_persistence_recovery_changed()
 	return false
+
+func _reject_if_persistence_blocked() -> bool:
+	if not _reload_required:
+		return false
+	_reject("存档提交结果待确认；操作已冻结，请重新载入。")
+	return true
 
 func _normalize_state(candidate: Variant) -> Dictionary:
 	var errors: Array[String] = []
@@ -1355,6 +1597,8 @@ func _schema_error(errors: Array[String], message: String) -> void:
 		errors.append(message)
 
 func update_settings(settings: Dictionary) -> void:
+	if _reject_if_persistence_blocked():
+		return
 	for key in settings.keys():
 		state.settings[key] = settings[key]
 	_emit_change()

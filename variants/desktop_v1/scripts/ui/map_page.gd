@@ -9,8 +9,14 @@ var snapshot: Dictionary = {}
 var selected_id := "H"
 var canvas: Control
 var detail: VBoxContainer
+var session: Node
+
+func _init(session_override: Node = null) -> void:
+	session = session_override
 
 func _ready() -> void:
+	if session == null:
+		session = get_node("/root/GameSession")
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
 	split_offset = -350
@@ -79,7 +85,7 @@ func _rebuild_detail() -> void:
 		detail.add_child(UI.label("尚未开放", "Warning"))
 
 func _attack_selected() -> void:
-	if GameSession.attack_node(selected_id):
+	if session.attack_node(selected_id):
 		open_battle_requested.emit()
 
 func _node(node_id: String) -> Dictionary:
@@ -89,7 +95,7 @@ func _node(node_id: String) -> Dictionary:
 	return {}
 
 func _has_owned_neighbor(node_id: String) -> bool:
-	for neighbor in GameSession.neighbors(node_id):
+	for neighbor in session.neighbors(node_id):
 		if _node(neighbor).owned:
 			return true
 	return false
